@@ -582,7 +582,10 @@ function Checks({
 }): ReactNode {
   return <div className="checks">
     <section className="check-group test-results">
-      <div className="eyebrow">Tests</div>
+      <div className="test-summary-heading">
+        <div className="eyebrow">Tests</div>
+        <span className="test-summary-count">{`${fixtureRuns.filter((run) => run.status === "passing").length}/${fixtureRuns.length} passing`}</span>
+      </div>
       {fixtureRuns.length === 0
         ? <p className="muted compact-copy">No test fixtures run at this point.</p>
         : <div className="test-fixture-runs">{fixtureRuns.map((run) => <TestFixtureResult

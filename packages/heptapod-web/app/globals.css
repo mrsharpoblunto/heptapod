@@ -352,6 +352,8 @@
   .status-blocked { @apply bg-[var(--warning-muted)] text-[var(--fg)]; }
   .command { @apply mt-1 inline-block rounded bg-[var(--canvas-inset)] px-1.5 py-1 text-[9px] text-[var(--fg)]; }
   .test-fixture-runs { @apply mt-3 overflow-hidden rounded-md border border-[var(--border)]; }
+  .test-summary-heading { @apply flex items-baseline justify-between gap-2; }
+  .test-summary-count { @apply font-mono text-[10px] whitespace-nowrap text-[var(--fg-muted)] tabular-nums; }
   .test-fixture-run { @apply grid grid-cols-[minmax(0,1fr)_auto] items-center border-b border-[var(--border)] bg-[var(--canvas)]; }
   .test-fixture-run:last-child { @apply border-b-0; }
   .test-fixture-run:hover { @apply bg-[var(--canvas-subtle)]; }

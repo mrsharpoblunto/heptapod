@@ -100,6 +100,7 @@ test("renders the packaged viewer around shared core model types", () => {
   assert.match(markup, /hljs-keyword/);
   assert.doesNotMatch(markup, /Observed test run/);
   assert.match(markup, />Tests</);
+  assert.match(markup, />0\/1 passing</);
   assert.match(markup, /Show test output for src\/math.test.js/);
   assert.match(markup, /Open src\/math.test.js in diff/);
   assert.match(markup, /src\/math.test.js/);
