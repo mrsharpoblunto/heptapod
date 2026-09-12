@@ -82,13 +82,13 @@ try {
   } else if (command === "validate") {
     const id = required(options, "id");
     const narrativePath = options.narrative ?? resolveReviewNarrativePath(id);
-    const { manifest, manifestPath } = loadManifest(narrativePath);
+    const { manifest, manifestPath } = loadManifest(narrativePath, repo);
     const verification = verifyNarrative(repo, manifest, manifestPath);
     printResult("Exact reconstruction verified.", { id, narrative: manifestPath, ...verification });
   } else if (command === "ingest") {
     const source = sourceSelection(repo, options);
     const narrativePath = options.narrative ?? resolveReviewNarrativePath(source.id);
-    const { manifest } = loadManifest(narrativePath);
+    const { manifest } = loadManifest(narrativePath, repo);
     if (manifest.source.base !== source.base || manifest.source.head !== source.head) {
       throw new Error(`Cached narrative ${source.id} does not match the selected source revisions; capture and author it again.`);
     }

@@ -47,7 +47,7 @@ function ensureCommit(repo: string, revision: string, fallbackRef?: string): str
 
 export function resolvePullRequest(repo: string, value: string): ReviewSourceSelection {
   const number = parsePullRequestNumber(value);
-  const result = run("gh", ["pr", "view", String(number), "--json", "baseRefOid,headRefOid,url"], {
+  const result = run("gh", ["api", `repos/{owner}/{repo}/pulls/${number}`, "--jq", "{baseRefOid: .base.sha, headRefOid: .head.sha, url: .html_url}"], {
     cwd: repo,
     allowFailure: true,
   });

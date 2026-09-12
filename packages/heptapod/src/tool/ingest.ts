@@ -34,7 +34,7 @@ export function ingestNarrative({
   collectRemoteEvidence?: boolean;
   onTestProgress?: (message: string) => void;
 }): IngestedReview {
-  const { manifest, manifestPath } = loadManifest(narrativePath);
+  const { manifest, manifestPath, generated } = loadManifest(narrativePath, repo);
   beginReviewIngestion(id, {
     title: manifest.title,
     summary: manifest.summary,
@@ -48,9 +48,9 @@ export function ingestNarrative({
   };
   try {
     progress("Validating the exact narrative patch stack");
-    const verification = verifyNarrative(repo, manifest, manifestPath);
+    const verification = verifyNarrative(repo, manifest, manifestPath, generated);
     progress("Analyzing changed files and test cases");
-    const analysis = analyzeNarrative(repo, manifest, manifestPath);
+    const analysis = analyzeNarrative(repo, manifest, manifestPath, generated);
     const testExecution = executeNarrativeTests(repo, manifest, manifestPath, progress, analysis.testAreasByStep);
     progress("Collecting pull-request evidence");
     const manualEvidence = collectRemoteEvidence ? collectGitHubEvidence(manifest.source.github) : [];

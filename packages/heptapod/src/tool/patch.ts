@@ -4,8 +4,8 @@ function decodeGitPath(value: string): string | null {
   let text = value.trim();
   if (text === "/dev/null") return null;
   if (text.startsWith('"') && text.endsWith('"')) {
-    text = text.slice(1, -1).replace(/\\([0-7]{1,3}|[abfnrtv\\"])/g, (_, escape: string) => {
-      if (/^[0-7]/.test(escape)) return String.fromCharCode(Number.parseInt(escape, 8));
+    text = text.slice(1, -1).replace(/(?:\\[0-7]{1,3})+|\\([abfnrtv\\"])/g, (match: string, escape: string | undefined) => {
+      if (escape === undefined) return Buffer.from(match.split("\\").slice(1).map((octal) => Number.parseInt(octal, 8))).toString("utf8");
       return { a: "\x07", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", "\\": "\\", '"': '"' }[escape] ?? escape;
     });
   }

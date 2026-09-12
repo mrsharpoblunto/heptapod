@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
@@ -24,6 +25,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
+  type DragEvent,
   type ElementType,
   type KeyboardEvent,
   type PointerEvent,
@@ -31,6 +34,7 @@ import {
 } from "react";
 import hljs from "highlight.js/lib/common";
 import type {
+  Callsite,
   Check,
   Evidence,
   PatchFile,
@@ -333,7 +337,7 @@ export function buildDiffSegments(
   return segments;
 }
 
-function DiffView({
+export function DiffView({
   filePath,
   patch,
   compact = false,
@@ -361,6 +365,7 @@ function DiffView({
     const firstHunk = parsed.findIndex((line) => line.type === "hunk");
     return firstHunk === -1 ? parsed : parsed.slice(firstHunk);
   }, [patch]);
+  const unchanged = !lines.some((line) => line.type === "add" || line.type === "del");
   const segments = useMemo(
     () => buildDiffSegments(lines, beforeContent, afterContent),
     [afterContent, beforeContent, lines],
@@ -427,7 +432,7 @@ function DiffView({
     const marker = isCodeLine && !omitMarker ? line.content.slice(0, 1) : "";
     const content = isCodeLine ? line.content.slice(1) : line.content;
     return <div className={classNames(`diff-line diff-${line.type}`, targetMatch.keys.has(line.key) && "diff-target")} data-diff-key={line.key} key={line.key}>
-      {pureAddition
+      {pureAddition || unchanged
         ? <span className="line-number">{line.next ?? ""}</span>
         : pureDeletion
           ? <span className="line-number">{line.old ?? ""}</span>
@@ -454,7 +459,7 @@ function DiffView({
   </div>;
 
   return <div className="diff-shell">
-    <div className={classNames("diff", compact && "diff-compact", (pureAddition || pureDeletion) && "diff-pure")} ref={containerRef}>
+    <div className={classNames("diff", compact && "diff-compact", (pureAddition || pureDeletion || unchanged) && "diff-pure")} ref={containerRef}>
       {gaps.length === 0 && githubFileUrl && <div className="diff-gap diff-control-gap">{globalActions}</div>}
       {segments.map((segment) => segment.kind === "lines"
         ? <div className="diff-lines" key={segment.id}>{segment.lines.map(renderLine)}</div>
@@ -492,7 +497,7 @@ function StatusBadge({ status }: Pick<Check, "status">): ReactNode {
 }
 
 function ChangeIcon({ change }: { change: "added" | "removed" | "changed" }): ReactNode {
-  return <span className="test-change-icon">
+  return <span className="test-change-icon" role="img" aria-label={change}>
     {change === "added" && <Plus aria-hidden="true" size={13} />}
     {change === "removed" && <Minus aria-hidden="true" size={13} />}
     {change === "changed" && <RefreshCw aria-hidden="true" size={12} />}
@@ -554,19 +559,34 @@ function TestFixtureResult({
   </div>;
 }
 
+export function newestFixtureRuns(steps: RenderStep[], stepIndex: number): TestFixtureRun[] {
+  const introduced = new Map<string, number>();
+  steps.slice(0, stepIndex + 1).forEach((step, index) => {
+    for (const run of step.testRun?.fixtureRuns ?? []) {
+      if (!introduced.has(run.file)) introduced.set(run.file, index);
+    }
+  });
+  return [...(steps[stepIndex].testRun?.fixtureRuns ?? [])]
+    .sort((left, right) => introduced.get(right.file)! - introduced.get(left.file)!);
+}
+
 function Checks({
   step,
+  fixtureRuns,
   selectedFile,
   onSelectFile,
 }: {
   step: RenderStep;
+  fixtureRuns: TestFixtureRun[];
   selectedFile: string | null;
   onSelectFile: (file: string) => void;
 }): ReactNode {
-  const fixtureRuns = step.testRun?.fixtureRuns ?? [];
   return <div className="checks">
     <section className="check-group test-results">
-      <div className="eyebrow">Tests</div>
+      <div className="test-summary-heading">
+        <div className="eyebrow">Tests</div>
+        <span className="test-summary-count">{`${fixtureRuns.filter((run) => run.status === "passing").length}/${fixtureRuns.length} passing`}</span>
+      </div>
       {fixtureRuns.length === 0
         ? <p className="muted compact-copy">No test fixtures run at this point.</p>
         : <div className="test-fixture-runs">{fixtureRuns.map((run) => <TestFixtureResult
@@ -720,8 +740,7 @@ function TestsStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNo
   </>;
 }
 
-function RefactorStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNode {
-  const interfaces = step.interfaces ?? [];
+function ChangedFileList({ files, step, selectedFile, onSelectFile }: StepViewProps & { files: Callsite[] }): ReactNode {
   const callsiteChange = (file: string, declared?: "added" | "removed" | "changed") => {
     if (declared) return declared;
     const snapshot = step.fileDiffs.find((candidate) => candidate.path === file);
@@ -729,6 +748,20 @@ function RefactorStep({ step, selectedFile, onSelectFile }: StepViewProps): Reac
     if (snapshot?.afterContent === null) return "removed";
     return "changed";
   };
+  return <div className="connected-file-list">
+    {files.map((file, index) => <FileLink
+      file={file.file}
+      label={file.label}
+      change={callsiteChange(file.file, file.change)}
+      key={`${file.file}-${index}`}
+      active={selectedFile === file.file}
+      onSelect={onSelectFile}
+    />)}
+  </div>;
+}
+
+function RefactorStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNode {
+  const interfaces = step.interfaces ?? [];
   return <>
     {step.body && <Markdown source={step.body} files={allStepFiles(step)} onSelectFile={onSelectFile} />}
     <div className="refactor-sections">
@@ -748,19 +781,7 @@ function RefactorStep({ step, selectedFile, onSelectFile }: StepViewProps): Reac
           </div>}
           <div className="refactor-file-group">
             <div className="refactor-subheading">Call sites</div>
-            <div className="connected-file-list">
-              {item.callsites.map((callsite, callsiteIndex) => {
-                const change = callsiteChange(callsite.file, callsite.change);
-                return <FileLink
-                  file={callsite.file}
-                  label={callsite.label}
-                  change={change}
-                  key={`${callsite.file}-${callsiteIndex}`}
-                  active={selectedFile === callsite.file}
-                  onSelect={onSelectFile}
-                />;
-              })}
-            </div>
+            <ChangedFileList files={item.callsites} step={step} selectedFile={selectedFile} onSelectFile={onSelectFile} />
           </div>
         </div>
       </section>)}
@@ -782,38 +803,51 @@ function ImplementationStep({
   source,
 }: StepViewProps & { source: RenderModel["source"] }): ReactNode {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(() => new Set());
-  const focused = (step.focus ?? [])
-    .map((path) => step.fileDiffs.find((file) => file.path === path))
-    .filter((file): file is PatchFile => file !== undefined);
+  const filesByPath = new Map(step.fileDiffs.map((file) => [file.path, file]));
   return <>
     {step.body && <Markdown source={step.body} files={allStepFiles(step)} onSelectFile={onSelectFile} />}
-    {focused.map((file) => <section className="focused-diff" key={file.path}>
-      <div className="connected-file-header">
-        <FileLink file={file.path} active={selectedFile === file.path} onSelect={onSelectFile} connected connectedCollapsed={collapsedFiles.has(file.path)} />
-        <button
-          aria-expanded={!collapsedFiles.has(file.path)}
-          aria-label={collapsedFiles.has(file.path) ? `Expand ${file.path} diff` : `Collapse ${file.path} diff`}
-          className={classNames("inline-diff-toggle", collapsedFiles.has(file.path) && "collapsed")}
-          onClick={() => setCollapsedFiles((current) => {
-            const next = new Set(current);
-            if (next.has(file.path)) next.delete(file.path);
-            else next.add(file.path);
-            return next;
+    <div className="implementation-sections">
+      {(step.sections ?? []).map((section, index) => <section className="implementation-section" key={index}>
+        <div className="test-area-heading">
+          <h3>{section.name}</h3>
+          <span className={classNames("test-type-badge", section.priority === "critical" && "critical-badge")}>{section.priority === "critical" ? "Critical" : "Secondary"}</span>
+        </div>
+        <Markdown source={section.description} files={allStepFiles(step)} onSelectFile={onSelectFile} />
+        {section.priority === "secondary"
+          ? <ChangedFileList files={section.files} step={step} selectedFile={selectedFile} onSelectFile={onSelectFile} />
+          : section.files.map((entry) => {
+            const file = filesByPath.get(entry.file);
+            if (!file) return null;
+            return <div className="focused-diff" key={file.path}>
+              <div className="connected-file-header">
+                <FileLink file={file.path} label={entry.label} active={selectedFile === file.path} onSelect={onSelectFile} connected connectedCollapsed={collapsedFiles.has(file.path)} />
+                <button
+                  aria-expanded={!collapsedFiles.has(file.path)}
+                  aria-label={collapsedFiles.has(file.path) ? `Expand ${file.path} diff` : `Collapse ${file.path} diff`}
+                  className={classNames("inline-diff-toggle", collapsedFiles.has(file.path) && "collapsed")}
+                  onClick={() => setCollapsedFiles((current) => {
+                    const next = new Set(current);
+                    if (next.has(file.path)) next.delete(file.path);
+                    else next.add(file.path);
+                    return next;
+                  })}
+                  title={collapsedFiles.has(file.path) ? "Expand inline diff" : "Collapse inline diff"}
+                >{collapsedFiles.has(file.path)
+                  ? <ChevronDown aria-hidden="true" size={15} />
+                  : <ChevronUp aria-hidden="true" size={15} />}
+                </button>
+              </div>
+              {!collapsedFiles.has(file.path) && <DiffView
+                filePath={file.path}
+                patch={file.patch}
+                beforeContent={file.beforeContent}
+                afterContent={file.afterContent}
+                githubFileUrl={githubFileUrl(source, file)}
+              />}
+            </div>;
           })}
-          title={collapsedFiles.has(file.path) ? "Expand inline diff" : "Collapse inline diff"}
-        >{collapsedFiles.has(file.path)
-          ? <ChevronDown aria-hidden="true" size={15} />
-          : <ChevronUp aria-hidden="true" size={15} />}
-        </button>
-      </div>
-      {!collapsedFiles.has(file.path) && <DiffView
-        filePath={file.path}
-        patch={file.patch}
-        beforeContent={file.beforeContent}
-        afterContent={file.afterContent}
-        githubFileUrl={githubFileUrl(source, file)}
-      />}
-    </section>)}
+      </section>)}
+    </div>
   </>;
 }
 
@@ -840,7 +874,9 @@ function DetailPanel({
   source,
   selectedFile,
   onSelectFile,
-  openFiles,
+  tabs,
+  onReorderTab,
+  fixtureRuns,
   onCloseFile,
   scrollTarget,
   detailWidth,
@@ -852,7 +888,9 @@ function DetailPanel({
   onResizeKeyDown,
 }: StepViewProps & {
   source: RenderModel["source"];
-  openFiles: string[];
+  tabs: string[];
+  onReorderTab: (from: string, to: string) => void;
+  fixtureRuns: TestFixtureRun[];
   onCloseFile: (file: string) => void;
   scrollTarget: DiffTarget | null;
   detailWidth: number;
@@ -863,10 +901,53 @@ function DetailPanel({
   onResizePointerUp: (event: PointerEvent<HTMLDivElement>) => void;
   onResizeKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
 }): ReactNode {
+  const [draggingTab, setDraggingTab] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const resetDrag = () => { setDraggingTab(null); setDropTarget(null); };
+  const dragHandlers = (tab: string) => ({
+    draggable: true,
+    onDragStart: (event: DragEvent<HTMLElement>) => {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", tab || "Step summary");
+      setDraggingTab(tab);
+    },
+    onDragOver: (event: DragEvent<HTMLElement>) => {
+      if (draggingTab === null) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      setDropTarget(tab);
+    },
+    onDrop: (event: DragEvent<HTMLElement>) => {
+      if (draggingTab === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onReorderTab(draggingTab, tab);
+      resetDrag();
+    },
+    onDragEnd: resetDrag,
+  });
+  const moveWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>, tab: string) => {
+    if (!event.altKey || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault();
+    const neighbor = tabs[tabs.indexOf(tab) + (event.key === "ArrowLeft" ? -1 : 1)];
+    if (neighbor !== undefined) onReorderTab(tab, neighbor);
+  };
+  const toggle = <button
+    key="details-toggle"
+    aria-expanded={!collapsed}
+    aria-label={collapsed ? "Expand details panel" : "Collapse details panel"}
+    className={classNames("panel-toggle", collapsed ? "detail-toggle-floating" : "detail-toggle")}
+    onClick={onToggle}
+    title={collapsed ? "Expand details panel" : "Collapse details panel"}
+  >{collapsed
+    ? <PanelRightOpen aria-hidden="true" size={16} />
+    : <PanelRightClose aria-hidden="true" size={16} />}
+  </button>;
+  if (collapsed) return toggle;
   const selected = allStepFiles(step).find((file) => file.path === selectedFile);
   const selectedGitHubUrl = selected ? githubFileUrl(source, selected) : null;
-  return <aside className={classNames("detail-panel", collapsed && "collapsed")}>
-    {!collapsed && <div
+  return <aside className="detail-panel">
+    <div
       aria-label="Resize details panel"
       aria-orientation="vertical"
       aria-valuemax={720}
@@ -880,44 +961,60 @@ function DetailPanel({
       onPointerCancel={onResizePointerUp}
       role="separator"
       tabIndex={0}
-    />}
+    />
     <div className="detail-header">
-      {!collapsed && <div className="detail-tabs" role="tablist" aria-label="Review details">
-        <button
+      <div className="detail-tabs" role="tablist" aria-label="Review details"
+        onDragOver={(event) => {
+          if (draggingTab === null) return;
+          event.preventDefault();
+          const bounds = event.currentTarget.getBoundingClientRect();
+          if (event.clientX < bounds.left + 32) event.currentTarget.scrollLeft -= 16;
+          if (event.clientX > bounds.right - 32) event.currentTarget.scrollLeft += 16;
+        }}
+        onDrop={(event) => {
+          if (draggingTab === null) return;
+          event.preventDefault();
+          onReorderTab(draggingTab, tabs.at(-1)!);
+          resetDrag();
+        }}
+      >
+        {tabs.map((file) => file === "" ? <button
+          {...dragHandlers(file)}
+          key={file}
           aria-selected={selectedFile === null}
-          className={classNames("detail-tab", "summary-tab", selectedFile === null && "active")}
+          aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
+          aria-description="Drag to reorder, or press Alt and an arrow key."
+          className={classNames("detail-tab", "summary-tab", selectedFile === null && "active", draggingTab === file && "tab-dragging", dropTarget === file && "tab-drop-target")}
           onClick={() => onSelectFile("")}
+          onKeyDown={(event) => moveWithKeyboard(event, file)}
           role="tab"
-        >Step summary</button>
-        {openFiles.map((file) => <div className={classNames("file-tab", selectedFile === file && "active")} key={file}>
+        >Step summary</button> : <div
+          {...dragHandlers(file)}
+          className={classNames("file-tab", selectedFile === file && "active", draggingTab === file && "tab-dragging", dropTarget === file && "tab-drop-target")}
+          key={file}
+        >
           <button
             aria-selected={selectedFile === file}
+            aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
+            aria-description="Drag to reorder, or press Alt and an arrow key."
             onClick={() => onSelectFile(file)}
+            onKeyDown={(event) => moveWithKeyboard(event, file)}
             role="tab"
             title={file}
           >{file.split("/").at(-1)}</button>
           <button aria-label={`Close ${file}`} className="close-tab" onClick={() => onCloseFile(file)} title={`Close ${file}`}><X aria-hidden="true" size={13} /></button>
         </div>)}
-      </div>}
-      <button
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? "Expand details panel" : "Collapse details panel"}
-        className="panel-toggle detail-toggle"
-        onClick={onToggle}
-        title={collapsed ? "Expand details panel" : "Collapse details panel"}
-      >{collapsed
-        ? <PanelRightOpen aria-hidden="true" size={16} />
-        : <PanelRightClose aria-hidden="true" size={16} />}
-      </button>
+      </div>
+      {toggle}
     </div>
-    {!collapsed && selectedFile === null && <div className="detail-panel-content">
-      <Checks step={step} selectedFile={selectedFile} onSelectFile={onSelectFile} />
+    {selectedFile === null && <div className="detail-panel-content">
+      <Checks step={step} fixtureRuns={fixtureRuns} selectedFile={selectedFile} onSelectFile={onSelectFile} />
       {step.fileDiffs.length > 0 && <section className="changed-files">
         <div className="eyebrow">Files in this step</div>
         <div className="file-pills">{step.fileDiffs.map((file) => <FileLink file={file.path} active={false} onSelect={onSelectFile} key={file.path} />)}</div>
       </section>}
     </div>}
-    {!collapsed && selected && <div className="detail-panel-content file-tab-content">
+    {selected && <div className="detail-panel-content file-tab-content">
       <div className="tab-diff">
         <DiffView
           filePath={selected.path}
@@ -937,16 +1034,46 @@ export function ReviewViewer({
   data,
   reviewId,
   updatedAt,
+  updating = false,
 }: {
   data: RenderModel;
   reviewId?: string;
   updatedAt: string;
+  updating?: boolean;
 }): ReactNode {
+  const router = useRouter();
+  const [liveStatus, setLiveStatus] = useState<{ updatedAt: string; pending: boolean } | null>(null);
+  const isUpdating = liveStatus?.updatedAt === updatedAt ? liveStatus.pending : updating;
+
+  useEffect(() => {
+    if (!reviewId) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/reviews?review=${encodeURIComponent(reviewId)}`, { cache: "no-store" });
+        if (!response.ok) return;
+        const review = await response.json() as { status: "pending" | "ready" | "failed"; updatedAt: string };
+        if (stopped) return;
+        const pending = review.status === "pending";
+        setLiveStatus((current) => current?.updatedAt === updatedAt && current.pending === pending ? current : { updatedAt, pending });
+        if (review.status !== "pending" && (review.updatedAt !== updatedAt || updating)) router.refresh();
+      } catch {
+        // Keep the current review available through a transient polling failure.
+      } finally {
+        if (!stopped) timer = setTimeout(poll, 1_000);
+      }
+    };
+    timer = setTimeout(poll, 1_000);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [reviewId, router, updatedAt, updating]);
+
   useReviewBackdropState("ready");
-  const [stepIndex, setStepIndex] = useState(0);
+  const [stepId, setStepId] = useState(data.steps[0].id);
+  const stepIndex = Math.max(0, data.steps.findIndex((item) => item.id === stepId));
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [detailWidth, setDetailWidth] = useState(420);
-  const [openFiles, setOpenFiles] = useState<string[]>([]);
+  const [tabs, setTabs] = useState<string[]>([""]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [scrollTarget, setScrollTarget] = useState<DiffTarget | null>(null);
   const [detailPreferencesLoaded, setDetailPreferencesLoaded] = useState(false);
@@ -988,14 +1115,26 @@ export function ReviewViewer({
       setScrollTarget(null);
       return;
     }
-    setOpenFiles((files) => files.includes(file) ? files : [...files, file]);
+    setTabs((files) => files.includes(file) ? files : [...files, file]);
     setSelectedFile(file);
     setScrollTarget(target ? { ...target } : null);
     setRightCollapsed(false);
   };
 
+  const reorderTab = (from: string, to: string) => {
+    setTabs((current) => {
+      const fromIndex = current.indexOf(from);
+      const toIndex = current.indexOf(to);
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return current;
+      const reordered = [...current];
+      reordered.splice(fromIndex, 1);
+      reordered.splice(toIndex, 0, from);
+      return reordered;
+    });
+  };
+
   const closeFile = (file: string) => {
-    setOpenFiles((files) => files.filter((candidate) => candidate !== file));
+    setTabs((files) => files.filter((candidate) => candidate !== file));
     if (selectedFile === file) {
       setSelectedFile(null);
       setScrollTarget(null);
@@ -1021,11 +1160,11 @@ export function ReviewViewer({
       initializedFromLocation.current = true;
       const requestedIndex = data.steps.findIndex((item) => `#${item.id}` === window.location.hash);
       if (requestedIndex > 0) {
-        setStepIndex(requestedIndex);
+        setStepId(data.steps[requestedIndex].id);
         return;
       }
     }
-    setOpenFiles([]);
+    setTabs([""]);
     setSelectedFile(null);
     setScrollTarget(null);
     stepContentRef.current?.scrollTo({ top: 0 });
@@ -1035,7 +1174,7 @@ export function ReviewViewer({
 
   return <ReviewRuntimeContext.Provider value={{ reviewId }}><div className="app-shell">
     <header className="topbar">
-      <ReviewHeader review={{
+      <ReviewHeader updating={isUpdating} review={{
         id: reviewId ?? `${data.source.base}/${data.source.head}`,
         title: data.title,
         summary: data.summary,
@@ -1050,12 +1189,13 @@ export function ReviewViewer({
     <div
       className="workspace"
       style={{
-        gridTemplateColumns: `276px minmax(480px, 1fr) ${rightCollapsed ? 52 : detailWidth}px`,
-      }}
+        gridTemplateColumns: `276px minmax(480px, 1fr)${rightCollapsed ? "" : ` ${detailWidth}px`}`,
+        "--detail-width": `${rightCollapsed ? 0 : detailWidth}px`,
+      } as CSSProperties}
     >
       <nav className="step-nav" aria-label="Narrative steps">
         {data.steps.map((item, index) => {
-          return <button className={classNames("step-button", index === stepIndex && "active")} onClick={() => setStepIndex(index)} key={item.id}>
+          return <button className={classNames("step-button", index === stepIndex && "active")} onClick={() => setStepId(item.id)} key={item.id}>
             <span className="step-number">{String(index + 1).padStart(2, "0")}</span>
             <span className="step-copy"><span>{item.title}</span><small>{kindLabel(item.kind)}</small></span>
             <span className={classNames(
@@ -1069,15 +1209,15 @@ export function ReviewViewer({
       <main className="main-panel">
         <div className="step-content" ref={stepContentRef}>
           <StepHeading step={step} />
-          <StepContent step={step} selectedFile={selectedFile} onSelectFile={openFile} source={data.source} />
+          <StepContent key={step.id} step={step} selectedFile={selectedFile} onSelectFile={openFile} source={data.source} />
         </div>
         <div className="step-pager">
           <div className="step-control" aria-label="Step navigation">
-            <button aria-label="Previous step" disabled={stepIndex === 0} onClick={() => setStepIndex((index) => index - 1)}>
+            <button aria-label="Previous step" disabled={stepIndex === 0} onClick={() => setStepId(data.steps[stepIndex - 1].id)}>
               <ChevronLeft aria-hidden="true" size={17} />
             </button>
             <span>{stepIndex + 1} / {data.steps.length}</span>
-            <button aria-label="Next step" disabled={stepIndex === data.steps.length - 1} onClick={() => setStepIndex((index) => index + 1)}>
+            <button aria-label="Next step" disabled={stepIndex === data.steps.length - 1} onClick={() => setStepId(data.steps[stepIndex + 1].id)}>
               <ChevronRight aria-hidden="true" size={17} />
             </button>
           </div>
@@ -1088,7 +1228,9 @@ export function ReviewViewer({
         source={data.source}
         selectedFile={selectedFile}
         onSelectFile={openFile}
-        openFiles={openFiles}
+        tabs={tabs}
+        onReorderTab={reorderTab}
+        fixtureRuns={newestFixtureRuns(data.steps, stepIndex)}
         onCloseFile={closeFile}
         scrollTarget={scrollTarget}
         detailWidth={detailWidth}

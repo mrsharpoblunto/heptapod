@@ -36,6 +36,7 @@ export interface ParsedTestCaseChange {
 
 export interface TestFileChange {
   path: string;
+  isFixture?: boolean;
   cases: ParsedTestCaseChange[];
 }
 
@@ -72,6 +73,13 @@ export interface Callsite {
   change?: TestCaseChangeKind;
 }
 
+export interface ImplementationSection {
+  name: string;
+  priority: "critical" | "secondary";
+  description: string;
+  files: Callsite[];
+}
+
 export interface NarrativeStep {
   id: string;
   title: string;
@@ -81,7 +89,7 @@ export interface NarrativeStep {
   checks: StepChecks;
   cases?: TestCase[];
   interfaces?: InterfaceChange[];
-  focus?: string[];
+  sections?: ImplementationSection[];
   evidence?: Evidence[];
 }
 
@@ -125,6 +133,8 @@ export interface VerificationResult {
   sourceBytes: number;
   patchSteps: number;
   exact: true;
+  /** Snapshot of the Git attribute exclusions used to validate and render this review. */
+  generatedFiles?: string[];
 }
 
 export type ObservedTestStatus = "passing" | "failing" | "timed-out" | "not-run";

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, LoaderCircle } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import {
@@ -42,7 +42,7 @@ function formattedDate(value: string): string {
   }).format(date);
 }
 
-function ReviewSourceMetadata({ review }: { review: ReviewHeaderData }): ReactNode {
+function ReviewSourceMetadata({ review, updating }: { review: ReviewHeaderData; updating: boolean }): ReactNode {
   const github = githubSource(review.sourceUrl);
   const revision = (commit: string) => github ? (
     <a href={`${github.repositoryUrl}/commit/${commit}`} target="_blank" rel="noreferrer">
@@ -51,6 +51,10 @@ function ReviewSourceMetadata({ review }: { review: ReviewHeaderData }): ReactNo
   ) : <code>{commit.slice(0, 7)}</code>;
 
   return <div className="source-metadata">
+    {updating && <span className="review-updating" role="status">
+      <LoaderCircle aria-hidden="true" className="progress-spinner" size={14} />
+      <span>Updating…</span>
+    </span>}
     {review.sourceUrl && github && <a className="github-link" href={review.sourceUrl} target="_blank" rel="noreferrer">
       <GitHubIcon />
       <span>PR #{github.number}</span>
@@ -71,18 +75,18 @@ function ReviewSourceMetadata({ review }: { review: ReviewHeaderData }): ReactNo
 export function ReviewHeader({
   review,
   compact = false,
+  updating = false,
   children,
 }: {
   review: ReviewHeaderData;
   compact?: boolean;
+  updating?: boolean;
   children?: ReactNode;
 }): ReactNode {
   const githubMetadata = useGitHubPullRequestMetadata(review.id, Boolean(review.sourceUrl));
   const title = compact
     ? <h2>{review.title}</h2>
-    : review.sourceUrl
-      ? <a className="review-title" href={review.sourceUrl} target="_blank" rel="noreferrer"><strong>{review.title}</strong></a>
-      : <strong>{review.title}</strong>;
+    : <strong className="review-title">{review.title}</strong>;
 
   const heading = <div className={`review-heading${compact ? " review-heading-compact" : ""}`}>
     {!compact && <Link className="review-back-link" href="/" aria-label="Back to reviews" title="Back to reviews">
@@ -95,13 +99,13 @@ export function ReviewHeader({
         {review.sourceUrl && <PullRequestBadges metadata={githubMetadata} />}
       </div>
       <span className="review-subheader">{review.summary}</span>
-      {compact && <ReviewSourceMetadata review={review} />}
+      {compact && <ReviewSourceMetadata review={review} updating={updating} />}
       {children}
     </div>
   </div>;
 
   return <>
     {heading}
-    {!compact && <ReviewSourceMetadata review={review} />}
+    {!compact && <ReviewSourceMetadata review={review} updating={updating} />}
   </>;
 }

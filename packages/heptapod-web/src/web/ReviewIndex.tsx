@@ -4,11 +4,13 @@ import { LoaderCircle, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { ReviewHeader, reviewPath, type ReviewHeaderData } from "./ReviewHeader";
+import type { ConnectedRepository } from "./connected-repository";
 
 interface ReviewSummary extends ReviewHeaderData {
   status: "pending" | "ready" | "failed";
   progress: string | null;
   error: string | null;
+  updating?: boolean;
 }
 
 function ReviewCard({
@@ -30,7 +32,7 @@ function ReviewCard({
     }}
   >
     <div className="review-list-content">
-      <ReviewHeader review={review} compact>
+      <ReviewHeader review={review} compact updating={review.updating}>
         {review.status !== "ready" && <div className={`review-state review-state-${review.status}`}>
           {review.status === "pending"
             ? <LoaderCircle aria-hidden="true" className="progress-spinner" size={15} />
@@ -51,14 +53,14 @@ function ReviewCard({
   </article>;
 }
 
-export function ReviewIndex({ reviews }: { reviews: ReviewSummary[] }) {
+export function ReviewIndex({ reviews, repository }: { reviews: ReviewSummary[]; repository: ConnectedRepository }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!reviews.some((review) => review.status === "pending")) return;
-    const timer = window.setInterval(() => router.refresh(), 1_000);
+    const interval = reviews.some((review) => review.status === "pending") ? 1_000 : 5_000;
+    const timer = window.setInterval(() => router.refresh(), interval);
     return () => window.clearInterval(timer);
   }, [reviews, router]);
 
@@ -84,7 +86,10 @@ export function ReviewIndex({ reviews }: { reviews: ReviewSummary[] }) {
     <div className="review-index">
       <h1 className="review-index-title">HEPTAPOD</h1>
       <section className="ingestion-help" aria-label="Ingestion instructions">
-        <p>Run Heptapod from the repository you want to review. Use the installed agent skill to author the narrative between capture and ingestion.</p>
+        <p>Connected repository: {repository.githubUrl
+          ? <a href={repository.githubUrl} target="_blank" rel="noreferrer">{repository.name}</a>
+          : <strong>{repository.name}</strong>}</p>
+        <p>Use the installed agent skill to author the narrative between capture and ingestion.</p>
         <div className="ingestion-commands">
           <div><span>Pull request</span><code>pnpm exec heptapod capture --pr &lt;number&gt;</code><code>pnpm exec heptapod ingest --pr &lt;number&gt;</code></div>
           <div><span>Revision range</span><code>pnpm exec heptapod capture --rev &lt;base&gt;...&lt;target&gt;</code><code>pnpm exec heptapod ingest --rev &lt;base&gt;...&lt;target&gt;</code></div>

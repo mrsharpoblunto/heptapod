@@ -1,4 +1,4 @@
-import { readArtifact } from "./manifest.js";
+import { assertNarrativeFileCoverage, readArtifact, resolveGeneratedFiles } from "./manifest.js";
 import {
   applyPatchToIndex,
   canonicalDiff,
@@ -8,7 +8,6 @@ import {
   stagedTree,
   withTemporaryIndex,
 } from "./git.js";
-import { splitPatchFiles } from "./patch.js";
 import type { NarrativeManifest, NarrativeStep, VerificationResult } from "./types.js";
 
 function firstDifference(expected: Buffer, actual: Buffer) {
@@ -29,28 +28,13 @@ function mismatchMessage(label: string, expected: Buffer, actual: Buffer): strin
   return `${label} differs at byte ${mismatch.byte} (line ${mismatch.line}).\nExpected: ${mismatch.expectedLine}\nActual:   ${mismatch.actualLine}`;
 }
 
-function verifyFileReferences(step: NarrativeStep, patch: Buffer): void {
-  const files = new Set(splitPatchFiles(patch.toString("utf8")).map((file) => file.path));
-  const requireFile = (path: string, label: string) => {
-    if (!files.has(path)) throw new Error(`${label} refers to ${path}, which is not changed by ${step.diff}.`);
-  };
-  if (step.kind === "implementation") {
-    step.focus?.forEach((path, index) => requireFile(path, `${step.id}.focus[${index}]`));
-  } else if (step.kind === "refactor") {
-    step.interfaces?.forEach((item, index) => {
-      if (item.file) requireFile(item.file, `${step.id}.interfaces[${index}].file`);
-      item.callsites.forEach((callsite, callsiteIndex) => requireFile(callsite.file, `${step.id}.interfaces[${index}].callsites[${callsiteIndex}].file`));
-    });
-  } else if (step.kind === "tests") {
-    step.cases?.forEach((item, index) => item.files.forEach((path) => requireFile(path, `${step.id}.cases[${index}].files`)));
-  }
-}
-
 export function verifyNarrative(
   repo: string,
   manifest: NarrativeManifest,
   manifestPath: string,
+  generated: ReadonlySet<string> = resolveGeneratedFiles(repo, manifest, manifestPath),
 ): VerificationResult {
+  assertNarrativeFileCoverage(manifest, manifestPath, generated);
   const base = resolveCommit(repo, manifest.source.base);
   const head = resolveCommit(repo, manifest.source.head);
   if (base !== manifest.source.base || head !== manifest.source.head) {
@@ -74,7 +58,6 @@ export function verifyNarrative(
     for (const [index, step] of patchSteps.entries()) {
       const patch = readArtifact(manifestPath, step.diff);
       if (patch.length === 0) throw new Error(`Step patch ${step.diff} is empty.`);
-      verifyFileReferences(step, patch);
       applyPatchToIndex(repo, env, patch, `${index + 1} (${step.id})`);
     }
 
@@ -96,6 +79,7 @@ export function verifyNarrative(
       sourceBytes: source.length,
       patchSteps: patchSteps.length,
       exact: true,
+      generatedFiles: [...generated].sort(),
     };
   });
 }

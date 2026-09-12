@@ -2,11 +2,10 @@ import { readFileSync } from "node:fs";
 import { dirname, extname, relative, resolve } from "node:path";
 import { patchStats, splitPatchFiles } from "./patch.js";
 import { rewriteRepositoryFileLinks } from "./markdown-references.js";
-import { readArtifact, resolveArtifactPath } from "./manifest.js";
+import { assertNarrativeFileCoverage, readArtifact, resolveArtifactPath } from "./manifest.js";
 import type {
+  Callsite,
   NarrativeManifest,
-  NarrativeStep,
-  PatchFile,
   RenderModel,
   VerificationResult,
   Evidence,
@@ -42,25 +41,6 @@ function inlineMarkdownImages(markdown: string, bodyPath: string, manifestPath: 
   });
 }
 
-function assertStepFileMetadata(step: NarrativeStep, fileDiffs: PatchFile[]): void {
-  const files = new Set(fileDiffs.map((file) => file.path));
-  const ensure = (path: string, label: string) => {
-    if (!files.has(path)) throw new Error(`${label} refers to ${path}, which is not changed by ${step.diff}.`);
-  };
-  if (step.kind === "implementation") {
-    step.focus?.forEach((path, index) => ensure(path, `${step.id}.focus[${index}]`));
-  }
-  if (step.kind === "refactor") {
-    step.interfaces?.forEach((item, index) => {
-      if (item.file) ensure(item.file, `${step.id}.interfaces[${index}].file`);
-      item.callsites.forEach((callsite, callsiteIndex) => ensure(callsite.file, `${step.id}.interfaces[${index}].callsites[${callsiteIndex}].file`));
-    });
-  }
-  if (step.kind === "tests") {
-    step.cases?.forEach((item, index) => item.files.forEach((path) => ensure(path, `${step.id}.cases[${index}].files`)));
-  }
-}
-
 export function buildReviewModel(
   manifest: NarrativeManifest,
   manifestPath: string,
@@ -71,30 +51,41 @@ export function buildReviewModel(
   manualEvidence: Evidence[] = [],
   testExecution?: NarrativeTestExecution,
 ): RenderModel {
-  const sourcePatch = readArtifact(manifestPath, manifest.source.diff).toString("utf8");
+  const generated = new Set(verification.generatedFiles ?? []);
+  assertNarrativeFileCoverage(manifest, manifestPath, generated);
+  const visiblePatch = (patch: string) => splitPatchFiles(patch).filter((file) => !generated.has(file.path)).map((file) => file.patch).join("");
+  const sourcePatch = visiblePatch(readArtifact(manifestPath, manifest.source.diff).toString("utf8"));
   const steps = manifest.steps.map((step, index) => {
-    const referenceSnapshots = referenceFilesByStep.get(step.id) ?? new Map<string, FileSnapshot>();
+    const referenceSnapshots = new Map([...(referenceFilesByStep.get(step.id) ?? new Map<string, FileSnapshot>())].filter(([path]) => !generated.has(path)));
     const body = step.body
       ? inlineMarkdownImages(readArtifact(manifestPath, step.body).toString("utf8"), step.body, manifestPath)
       : "";
-    const patch = step.diff ? readArtifact(manifestPath, step.diff).toString("utf8") : "";
+    const patch = step.diff ? visiblePatch(readArtifact(manifestPath, step.diff).toString("utf8")) : "";
     const fileDiffs = patch ? splitPatchFiles(patch).map((file) => ({
       ...file,
       ...filesByStep.get(step.id)?.get(file.path),
     })) : [];
     const changedPaths = new Set(fileDiffs.map((file) => file.path));
+    const knownPaths = new Set([...changedPaths, ...referenceSnapshots.keys()]);
+    const describeFile = (file: Callsite): Callsite => {
+      if (file.change) return file;
+      const snapshot = filesByStep.get(step.id)?.get(file.file);
+      const patch = fileDiffs.find((candidate) => candidate.path === file.file)?.patch ?? "";
+      const change = snapshot?.beforeContent === null || /^new file mode /m.test(patch)
+        ? "added"
+        : snapshot?.afterContent === null || /^deleted file mode /m.test(patch) ? "removed" : "changed";
+      return { ...file, change };
+    };
     const interfaces = step.interfaces?.map((item) => ({
       ...item,
-      callsites: item.callsites.map((callsite) => {
-        if (callsite.change) return callsite;
-        const snapshot = filesByStep.get(step.id)?.get(callsite.file);
-        const change = snapshot?.beforeContent === null
-          ? "added"
-          : snapshot?.afterContent === null
-            ? "removed"
-            : "changed";
-        return { ...callsite, change } as const;
-      }),
+      callsites: item.callsites.map(describeFile),
+    }));
+    const sections = step.sections?.map((section) => ({
+      ...section,
+      description: rewriteRepositoryFileLinks(
+        inlineMarkdownImages(section.description, step.body ?? "narrative.json", manifestPath), knownPaths,
+      ),
+      files: section.files.map(describeFile),
     }));
     const referenceFiles = [...referenceSnapshots]
       .filter(([path]) => !changedPaths.has(path))
@@ -103,7 +94,6 @@ export function buildReviewModel(
         patch: snapshot.afterContent === null ? "" : snapshotPatch(snapshot.afterContent),
         ...snapshot,
       }));
-    if (patch) assertStepFileMetadata(step, fileDiffs);
     const explicitEvidenceUrls = new Set([
       ...(step.evidence ?? []).map((item) => item.url),
       ...step.checks.automated.flatMap((check) => check.evidence ?? []).map((item) => item.url),
@@ -112,8 +102,9 @@ export function buildReviewModel(
     return {
       ...step,
       interfaces,
+      sections,
       number: index + 1,
-      body: rewriteRepositoryFileLinks(body, new Set([...changedPaths, ...referenceSnapshots.keys()])),
+      body: rewriteRepositoryFileLinks(body, knownPaths),
       patch,
       fileDiffs,
       referenceFiles,
@@ -129,7 +120,7 @@ export function buildReviewModel(
   return {
     title: manifest.title,
     summary: manifest.summary,
-    source: { ...manifest.source, stats: patchStats(sourcePatch) },
+    source: { ...manifest.source, files: manifest.source.files?.filter((file) => !generated.has(file.path)), stats: patchStats(sourcePatch) },
     verification,
     testExecution: testExecution?.metadata,
     steps,
