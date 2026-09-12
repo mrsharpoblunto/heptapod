@@ -1,15 +1,8 @@
 #!/usr/bin/env node
-import { captureNarrative } from "./capture.js";
-import {
-  resolveDatabasePath,
-  resolveReviewNarrativePath,
-  resolveReviewRunDirectory,
-} from "./cache.js";
-import { repositoryRoot } from "./git.js";
-import { ingestNarrative } from "./ingest.js";
-import { loadManifest } from "./manifest.js";
-import { resolvePullRequest, resolveRevisionRange, type ReviewSourceSelection } from "./review-source.js";
-import { verifyNarrative } from "./verify.js";
+import { captureReview, validateReview, ingestReview } from "@thestraylight/heptapod-core/commands";
+import { prepareReview } from "@thestraylight/heptapod-core/prepare";
+import { resolveDatabasePath } from "@thestraylight/heptapod-core/cache";
+import { repositoryRoot } from "@thestraylight/heptapod-core/git";
 
 function usage(): string {
   return `heptapod
@@ -17,12 +10,14 @@ function usage(): string {
 Usage:
   heptapod capture --pr <number>
   heptapod capture --rev <base>...<target>
+  heptapod prepare --pr <number> --agent <codex|claude>
   heptapod validate --id <review-id>
   heptapod ingest --pr <number> [--site-url <url>]
   heptapod ingest --rev <base>...<target> [--site-url <url>]
 
 Commands:
   capture   Pin base/head commits and create source.diff plus an artifact scaffold.
+  prepare   Capture, ask an authenticated agent to author metadata, validate, and ingest.
   validate  Apply every step patch in order and prove an exact source-diff match.
   ingest    Validate first, then upsert the review payload into SQLite.
 `;
@@ -51,12 +46,6 @@ function printResult(label: string, result: unknown): void {
   process.stdout.write(`${label}\n${JSON.stringify(result, null, 2)}\n`);
 }
 
-function sourceSelection(repo: string, options: Record<string, string>): ReviewSourceSelection {
-  if (options.pr && options.rev) throw new Error("Use either --pr or --rev, not both.");
-  if (options.pr) return resolvePullRequest(repo, options.pr);
-  if (options.rev) return resolveRevisionRange(repo, options.rev);
-  throw new Error("Either --pr or --rev is required.");
-}
 
 try {
   const { command, options } = parseArguments(process.argv.slice(2));
@@ -70,35 +59,16 @@ try {
   const repo = repositoryRoot();
   process.env.HEPTAPOD_ROOT ??= repo;
   if (command === "capture") {
-    const source = sourceSelection(repo, options);
-    const result = captureNarrative(
-      repo,
-      source.base,
-      source.head,
-      options["output-dir"] ?? resolveReviewRunDirectory(source.id),
-      { githubPrUrl: source.githubPrUrl },
-    );
-    printResult("Captured source diff and scaffold.", { id: source.id, ...result });
+    printResult("Captured source diff and scaffold.", captureReview(repo, options, options["output-dir"]));
+  } else if (command === "prepare") {
+    printResult("Review prepared and ingested.", await prepareReview(repo, required(options, "pr"), required(options, "agent")));
   } else if (command === "validate") {
-    const id = required(options, "id");
-    const narrativePath = options.narrative ?? resolveReviewNarrativePath(id);
-    const { manifest, manifestPath } = loadManifest(narrativePath, repo);
-    const verification = verifyNarrative(repo, manifest, manifestPath);
-    printResult("Exact reconstruction verified.", { id, narrative: manifestPath, ...verification });
+    printResult("Exact reconstruction verified.", validateReview(repo, required(options, "id"), options.narrative));
   } else if (command === "ingest") {
-    const source = sourceSelection(repo, options);
-    const narrativePath = options.narrative ?? resolveReviewNarrativePath(source.id);
-    const { manifest } = loadManifest(narrativePath, repo);
-    if (manifest.source.base !== source.base || manifest.source.head !== source.head) {
-      throw new Error(`Cached narrative ${source.id} does not match the selected source revisions; capture and author it again.`);
-    }
-    const review = ingestNarrative({
-      id: source.id,
-      repo,
-      narrativePath,
+    const review = ingestReview(repo, options, {
+      narrativePath: options.narrative,
       siteUrl: options["site-url"],
-      collectRemoteEvidence: true,
-      onTestProgress: (message) => process.stderr.write(`${message}\n`),
+      onProgress: (message) => process.stderr.write(`${message}\n`),
     });
     printResult("Exact reconstruction verified and review ingested.", {
       id: review.id,

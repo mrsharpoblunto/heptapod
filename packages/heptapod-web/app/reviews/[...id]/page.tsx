@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getReview } from "@thestraylight/heptapod/database";
+import { getReview } from "@thestraylight/heptapod-core/database";
+import { GitHubMetadataProvider } from "../../../src/web/GitHubIdentity";
+import { githubSourceFromPullRequestUrl, loadGitHubPullRequestMetadata } from "../../../src/web/github-metadata";
+import { reviewSummary } from "../../../src/web/review-summary";
 import { PendingReview } from "../../../src/web/PendingReview";
 import { ReviewViewer } from "../../../src/web/ReviewViewer";
 
@@ -21,15 +24,11 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
   const id = (await params).id.join("/");
   const review = getReview(id);
   if (!review) notFound();
-  if ((review.status === "pending" && !review.payload) || review.status === "failed") {
-    return <PendingReview
-      id={review.id}
-      title={review.title}
-      status={review.status}
-      progress={review.progress}
-      error={review.error}
-    />;
+  if (!review.payload && (review.status === "preparing" || review.status === "pending" || review.status === "failed")) {
+    return <GitHubMetadataProvider promises={{ [id]: loadGitHubPullRequestMetadata(githubSourceFromPullRequestUrl(review.sourceUrl)) }}>
+      <PendingReview review={reviewSummary(review)} />
+    </GitHubMetadataProvider>;
   }
   if (!review.payload) notFound();
-  return <ReviewViewer data={review.payload} reviewId={id} updatedAt={review.updatedAt} updating={review.status === "pending"} />;
+  return <GitHubMetadataProvider promises={{ [id]: loadGitHubPullRequestMetadata(review.payload.source.github) }}><ReviewViewer data={review.payload} reviewId={id} updatedAt={review.updatedAt} status={review.status} progress={review.progress} updating={review.status === "pending" || review.status === "preparing"} /></GitHubMetadataProvider>;
 }

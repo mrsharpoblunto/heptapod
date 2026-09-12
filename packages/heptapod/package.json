@@ -11,38 +11,23 @@
   },
   "homepage": "https://github.com/mrsharpoblunto/heptapod#readme",
   "bugs": "https://github.com/mrsharpoblunto/heptapod/issues",
-  "keywords": ["code-review", "diff", "github", "ai-agent"],
+  "keywords": [
+    "code-review",
+    "diff",
+    "github",
+    "ai-agent"
+  ],
   "bin": {
     "heptapod": "scripts/heptapod.mjs"
   },
   "files": [
-    "dist",
+    "dist/tool/cli.js",
+    "dist/tool/cli.d.ts",
     "scripts",
     "README.md",
     "LICENSE"
   ],
-  "exports": {
-    ".": {
-      "types": "./dist/tool/index.d.ts",
-      "import": "./dist/tool/index.js"
-    },
-    "./database": {
-      "types": "./dist/tool/database.d.ts",
-      "import": "./dist/tool/database.js"
-    },
-    "./cache": {
-      "types": "./dist/tool/cache.d.ts",
-      "import": "./dist/tool/cache.js"
-    },
-    "./review-draft": {
-      "types": "./dist/tool/review-draft.d.ts",
-      "import": "./dist/tool/review-draft.js"
-    },
-    "./types": {
-      "types": "./dist/tool/types.d.ts",
-      "import": "./dist/tool/types.js"
-    }
-  },
+  "exports": {},
   "publishConfig": {
     "access": "public"
   },
@@ -51,7 +36,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
-    "test": "pnpm run build && vitest run",
+    "test": "pnpm run build && node --test test/*.test.mjs",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run test",
     "prepack": "pnpm run build"
   },
@@ -59,7 +44,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@swc/core": "^1.16.2"
+    "@thestraylight/heptapod-core": "workspace:^"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

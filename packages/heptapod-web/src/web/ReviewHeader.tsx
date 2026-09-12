@@ -1,8 +1,9 @@
 "use client";
 
-import { ChevronLeft, LoaderCircle } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
+import type { GitHubPullRequestMetadata } from "@thestraylight/heptapod-core/types";
 import {
   GitHubIcon,
   PullRequestAvatar,
@@ -42,7 +43,7 @@ function formattedDate(value: string): string {
   }).format(date);
 }
 
-function ReviewSourceMetadata({ review, updating }: { review: ReviewHeaderData; updating: boolean }): ReactNode {
+function ReviewSourceMetadata({ review }: { review: ReviewHeaderData }): ReactNode {
   const github = githubSource(review.sourceUrl);
   const revision = (commit: string) => github ? (
     <a href={`${github.repositoryUrl}/commit/${commit}`} target="_blank" rel="noreferrer">
@@ -51,19 +52,15 @@ function ReviewSourceMetadata({ review, updating }: { review: ReviewHeaderData; 
   ) : <code>{commit.slice(0, 7)}</code>;
 
   return <div className="source-metadata">
-    {updating && <span className="review-updating" role="status">
-      <LoaderCircle aria-hidden="true" className="progress-spinner" size={14} />
-      <span>Updating…</span>
-    </span>}
     {review.sourceUrl && github && <a className="github-link" href={review.sourceUrl} target="_blank" rel="noreferrer">
       <GitHubIcon />
       <span>PR #{github.number}</span>
     </a>}
-    <div className="revisions">
+    {review.baseRevision && review.headRevision && <div className="revisions">
       {revision(review.baseRevision)}
       <span aria-hidden="true">→</span>
       {revision(review.headRevision)}
-    </div>
+    </div>}
     {review.additions !== null && review.deletions !== null && <div className="source-diff-stats">
       <span className="additions">+{review.additions}</span>
       <span className="deletions">−{review.deletions}</span>
@@ -72,18 +69,28 @@ function ReviewSourceMetadata({ review, updating }: { review: ReviewHeaderData; 
   </div>;
 }
 
+function Avatar({ id, compact }: { id: string; compact: boolean }) {
+  return <PullRequestAvatar metadata={useGitHubPullRequestMetadata(id)} compact={compact} />;
+}
+function Badges({ id }: { id: string }) {
+  return <PullRequestBadges metadata={useGitHubPullRequestMetadata(id)} />;
+}
+
 export function ReviewHeader({
   review,
   compact = false,
-  updating = false,
   children,
+  metadata,
+  actions,
+  cardActions,
 }: {
   review: ReviewHeaderData;
   compact?: boolean;
-  updating?: boolean;
   children?: ReactNode;
+  metadata?: GitHubPullRequestMetadata;
+  actions?: ReactNode;
+  cardActions?: ReactNode;
 }): ReactNode {
-  const githubMetadata = useGitHubPullRequestMetadata(review.id, Boolean(review.sourceUrl));
   const title = compact
     ? <h2>{review.title}</h2>
     : <strong className="review-title">{review.title}</strong>;
@@ -92,20 +99,33 @@ export function ReviewHeader({
     {!compact && <Link className="review-back-link" href="/" aria-label="Back to reviews" title="Back to reviews">
       <ChevronLeft aria-hidden="true" size={20} />
     </Link>}
-    {review.sourceUrl && <PullRequestAvatar metadata={githubMetadata} compact={compact} />}
-    <div className="title-block">
+    {review.sourceUrl && <Suspense fallback={<PullRequestAvatar metadata={undefined} compact={compact} />}>{metadata ? <PullRequestAvatar metadata={metadata} compact={compact} /> : <Avatar id={review.id} compact={compact} />}</Suspense>}
+    <div className={`title-block${actions ? " title-block-with-actions" : ""}`}>
       <div className="title-line">
+        {review.sourceUrl && <Suspense fallback={<PullRequestBadges metadata={undefined} />}>{metadata ? <PullRequestBadges metadata={metadata} /> : <Badges id={review.id} />}</Suspense>}
         {title}
-        {review.sourceUrl && <PullRequestBadges metadata={githubMetadata} />}
       </div>
-      <span className="review-subheader">{review.summary}</span>
-      {compact && <ReviewSourceMetadata review={review} updating={updating} />}
-      {children}
+      {actions && <div className="review-heading-actions">{actions}</div>}
+      {!cardActions && review.summary && <span className="review-subheader">{review.summary}</span>}
+      {!cardActions && compact && <ReviewSourceMetadata review={review} />}
+      {!cardActions && children}
     </div>
   </div>;
 
+  if (cardActions) return <>
+    <div className="review-card-header">{heading}</div>
+    <div className="review-card-body">
+      <div className="review-card-details">
+        {review.summary && <span className="review-subheader">{review.summary}</span>}
+        <ReviewSourceMetadata review={review} />
+        {children}
+      </div>
+      {cardActions}
+    </div>
+  </>;
+
   return <>
     {heading}
-    {!compact && <ReviewSourceMetadata review={review} updating={updating} />}
+    {!compact && <ReviewSourceMetadata review={review} />}
   </>;
 }

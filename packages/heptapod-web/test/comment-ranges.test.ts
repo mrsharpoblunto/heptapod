@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import type { ReviewComment, ReviewCommentTarget } from "@thestraylight/heptapod/types";
+import type { ReviewComment, ReviewCommentTarget } from "@thestraylight/heptapod-core/types";
 import { mergeCodeComments, reconcileSummary } from "../src/web/ReviewComments";
 
 const target: Extract<ReviewCommentTarget, { kind: "line" }> = { kind: "line", stepId: "tests", anchor: "code", path: "test.ts", side: "RIGHT", startLine: 4, endLine: 8 };

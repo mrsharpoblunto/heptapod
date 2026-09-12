@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import type { AgentId } from "./agents.js";
+import { agentPreferences, readConfigFile } from "./config-file.js";
 import { fixtureAdapters, type FixtureFormat } from "./test-fixtures/index.js";
 import { runnerAdapters, type RunnerFormat } from "./test-runners/index.js";
 
@@ -12,6 +12,7 @@ export interface HeptapodTestRunnerConfig extends HeptapodCommandConfig {
 }
 
 export interface HeptapodConfig {
+  agents?: { preferenceOrder?: AgentId[] };
   test?: {
     prerequisites?: HeptapodCommandConfig[];
     build?: HeptapodCommandConfig[];
@@ -32,15 +33,9 @@ function assertCommand(value: unknown, label: string): asserts value is Heptapod
 }
 
 export function loadHeptapodConfig(repo: string): HeptapodConfig | null {
-  const path = join(repo, ".heptapod.json");
-  if (!existsSync(path)) return null;
-  let value: unknown;
-  try {
-    value = JSON.parse(readFileSync(path, "utf8"));
-  } catch (error) {
-    throw new Error(`Could not read ${path}: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid .heptapod.json: root must be an object.");
+  const value = readConfigFile(repo);
+  if (!value) return null;
+  agentPreferences(value);
   const config = value as HeptapodConfig;
   if (config.test !== undefined) {
     if (!config.test || typeof config.test !== "object" || Array.isArray(config.test)) throw new Error("Invalid .heptapod.json: test must be an object.");

@@ -122,8 +122,14 @@ test("capture, validate, ingest, and load an exact narrative stack", () => {
   const artifact = mkdtempSync(join(tmpdir(), "heptapod-artifact-"));
   const captured = captureNarrative(repositoryRoot(repo), base, head, artifact, {
     githubPrUrl: "https://github.com/example/math/pull/42",
+    databasePath: join(artifact, "reviews.sqlite"),
   });
   assert.equal(captured.files, 3);
+  const preparing = getReview("42", join(artifact, "reviews.sqlite"));
+  assert.equal(preparing?.status, "preparing");
+  assert.equal(preparing?.metadataDirectory, captured.metadataDirectory);
+  assert.equal(preparing?.progress, "Preparing review");
+  assert.equal(preparing?.payload, null);
   const manifestPath = authorNarrative(repo, base, head, artifact);
   const { manifest } = loadManifest(manifestPath);
   const verification = verifyNarrative(repo, manifest, manifestPath);

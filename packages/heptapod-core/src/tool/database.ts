@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { resolveDatabasePath, validateReviewId } from "./cache.js";
 import { validateReviewComments } from "./review-draft.js";
+import type { AgentId } from "./agents.js";
 import type { RenderModel, ReviewComment, ReviewDraft } from "./types.js";
 
 export { resolveDatabasePath, validateReviewId } from "./cache.js";
@@ -17,9 +18,11 @@ export interface StoredReview {
   headRevision: string;
   createdAt: string;
   updatedAt: string;
-  status: "pending" | "ready" | "failed";
+  status: "preparing" | "pending" | "ready" | "failed";
   progress: string | null;
   error: string | null;
+  metadataDirectory: string | null;
+  agentId: AgentId | null;
   payload: RenderModel | null;
 }
 
@@ -37,8 +40,10 @@ interface ReviewRow {
   head_revision: string;
   created_at: string;
   updated_at: string;
+  metadata_directory: string | null;
+  agent_id: AgentId | null;
   payload_json: string;
-  status: "pending" | "ready" | "failed";
+  status: "preparing" | "pending" | "ready" | "failed";
   progress: string | null;
   error: string | null;
 }
@@ -69,6 +74,8 @@ function openDatabase(databasePath?: string): DatabaseSync {
   const columns = new Set(
     (database.prepare("PRAGMA table_info(reviews)").all() as Array<{ name: string }>).map((column) => column.name),
   );
+  if (!columns.has("agent_id")) database.exec("ALTER TABLE reviews ADD COLUMN agent_id TEXT;");
+  if (!columns.has("metadata_directory")) database.exec("ALTER TABLE reviews ADD COLUMN metadata_directory TEXT;");
   if (!columns.has("status")) database.exec("ALTER TABLE reviews ADD COLUMN status TEXT NOT NULL DEFAULT 'ready';");
   if (!columns.has("progress")) database.exec("ALTER TABLE reviews ADD COLUMN progress TEXT;");
   if (!columns.has("error")) database.exec("ALTER TABLE reviews ADD COLUMN error TEXT;");
@@ -170,6 +177,45 @@ export function finishReviewDraftPublication(reviewId: string, success: boolean,
     database.prepare("UPDATE review_drafts SET publishing_until = 0, published_at = COALESCE(?, published_at) WHERE review_id = ?")
       .run(success ? new Date().toISOString() : null, reviewId);
     return draftFromDatabase(database, reviewId);
+  } finally { database.close(); }
+}
+
+export interface PreparationDetails {
+  title: string;
+  sourceUrl?: string;
+  baseRevision?: string;
+  headRevision?: string;
+  metadataDirectory: string;
+  agentId?: AgentId;
+}
+
+// INSERT OR IGNORE makes the web launch claim atomic across requests/processes.
+export function beginReviewPreparation(id: string, details: PreparationDetails, databasePath?: string, claimOnly = false): boolean {
+  validateReviewId(id);
+  const database = openDatabase(databasePath);
+  const now = new Date().toISOString();
+  try {
+    const result = database.prepare(`INSERT INTO reviews
+      (id, title, summary, source_url, base_revision, head_revision, payload_json,
+       created_at, updated_at, status, progress, metadata_directory, agent_id)
+      VALUES (?, ?, '', ?, ?, ?, 'null', ?, ?, 'preparing', 'Preparing review', ?, ?)
+      ON CONFLICT(id) DO ${claimOnly ? "NOTHING" : `UPDATE SET
+        title = excluded.title, source_url = excluded.source_url,
+        base_revision = excluded.base_revision, head_revision = excluded.head_revision,
+        updated_at = excluded.updated_at, status = 'preparing', progress = 'Preparing review',
+        metadata_directory = excluded.metadata_directory, agent_id = COALESCE(excluded.agent_id, reviews.agent_id), error = NULL`}`)
+      .run(id, details.title, details.sourceUrl ?? null, details.baseRevision ?? "", details.headRevision ?? "", now, now, details.metadataDirectory, details.agentId ?? null);
+    return result.changes > 0;
+  } finally { database.close(); }
+}
+
+export function beginReviewUpdate(id: string, databasePath?: string): boolean {
+  validateReviewId(id);
+  const database = openDatabase(databasePath);
+  try {
+    return database.prepare(`UPDATE reviews SET status = 'preparing', progress = 'Checking for PR changes', error = NULL, updated_at = ?
+      WHERE id = ? AND payload_json != 'null' AND status NOT IN ('preparing', 'pending')`)
+      .run(new Date().toISOString(), id).changes > 0;
   } finally { database.close(); }
 }
 
@@ -292,6 +338,8 @@ function rowToReview(row: ReviewRow): StoredReview {
     status: row.status,
     progress: row.progress,
     error: row.error,
+    metadataDirectory: row.metadata_directory,
+    agentId: row.agent_id,
     payload: JSON.parse(row.payload_json) as RenderModel | null,
   };
 }

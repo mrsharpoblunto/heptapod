@@ -7,7 +7,7 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["src/**/*.ts", "test/**/*.ts", "scripts/*.mjs"],
+    files: ["src/**/*.ts", "test/**/*.ts", "test/**/*.mjs", "scripts/*.mjs"],
     languageOptions: { globals: globals.node },
     rules: {
       "@typescript-eslint/no-explicit-any": "error",

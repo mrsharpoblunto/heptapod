@@ -6,7 +6,9 @@ Heptapod turns a large pull request or branch diff into a verified, chronologica
 
 This repository is a pnpm monorepo:
 
-- `packages/heptapod` — publishable CLI and shared TypeScript core (`@thestraylight/heptapod`)
+- `packages/heptapod-core` — shared capture, validation, ingestion, storage, and agent APIs (`@thestraylight/heptapod-core`)
+- `packages/heptapod` — lightweight CLI harness (`@thestraylight/heptapod`)
+- `packages/heptapod-api` — background API sidecar and job workers (`@thestraylight/heptapod-api`)
 - `packages/heptapod-web` — publishable Next.js review site (`@thestraylight/heptapod-web`)
 - `packages/heptapod-skill` — publishable Codex/Claude skill package (`@thestraylight/heptapod-skill`)
 
@@ -16,7 +18,7 @@ pnpm check
 pnpm dev:web
 ```
 
-`pnpm dev:cli --help` executes the CLI TypeScript source directly. `pnpm dev:web` runs the Next.js development server with hot reload; it defaults to <http://localhost:3000>.
+`pnpm dev:cli --help` executes the CLI TypeScript source directly. `pnpm dev:web` runs the Next.js development server with hot reload; it defaults to <http://localhost:3000> and starts the API sidecar on port 3001 (the web port plus one). The launcher builds core/API first; restart it after changing those packages.
 
 ## Install in a repository
 
@@ -31,6 +33,18 @@ Review data is shared automatically through `node_modules/.cache/heptapod/review
 
 The skill installer creates project-local links for both agents: `.agents/skills/heptapod` for Codex and `.claude/skills/heptapod` for Claude. It refuses to overwrite unrelated files; `pnpm exec heptapod-skill uninstall` removes only links owned by the installed package.
 
+The homepage checks Git, GitHub CLI authentication, installed Heptapod skills, and Codex/Claude Code authentication. Imported reviews appear first. When a supported agent is installed, open PRs that have not been imported appear below, newest first, loading more pages as you scroll. Enable **Include closed and merged** to include completed PRs as well; it is off by default. Choose an authenticated agent from **Import** to capture metadata, author and validate the narrative, then ingest it automatically. Setup failures include repair instructions.
+
+Setup checks and GitHub identity requests start as server promises and stream through Suspense. Preparation, ingestion, and GitHub draft publication run in the API sidecar's workers; the browser polls the sidecar for progress instead of holding a Next.js route open.
+
+Configure the default import agent and dropdown order in `.heptapod.json`:
+
+```json
+{ "agents": { "preferenceOrder": ["claude", "codex"] } }
+```
+
+The first installed, authenticated agent with its skill installed is the primary **Import** action. Omitted agents follow in the default order (Codex, then Claude Code). The dropdown only appears when multiple agents are installed and authenticated.
+
 ## CLI
 
 ```sh
@@ -42,7 +56,7 @@ pnpm exec heptapod-web --port 3000
 
 For a branch comparison, use `--rev '<base>...<target>'` with `capture` and `ingest`; its stable review ID is `<full-base-sha>/<full-target-sha>`. Narrative source files live beside the database under `node_modules/.cache/heptapod/runs/<review-id>` and are resolved automatically. `validate` accepts that emitted ID through `--id`.
 
-Ingestion marks the review pending in SQLite, creates and later removes its own temporary worktree, and reconstructs every narrative step. Intermediate steps run the changed test fixtures introduced so far; the final step runs the complete suite. Observed output and unexpected failures are stored alongside the authored expectations.
+Capture creates a **Preparing review** entry in SQLite and prints its absolute `metadataDirectory` and `narrative` path. Ingestion changes the review to pending, creates and later removes its own temporary worktree, and reconstructs every narrative step. Intermediate steps run the changed test fixtures introduced so far; the final step runs the complete suite. Observed output and unexpected failures are stored alongside the authored expectations.
 
 Add an optional `.heptapod.json` at the repository root when tests need project-specific preparation or a custom runner. Commands are argv arrays, and `{files}` expands to the focused fixture paths during intermediate steps (and to no arguments for the final full-suite run):
 

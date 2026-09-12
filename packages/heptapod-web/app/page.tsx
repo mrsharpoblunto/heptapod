@@ -1,25 +1,26 @@
-import { listReviews } from "@thestraylight/heptapod/database";
+import { Suspense } from "react";
+import { listReviews } from "@thestraylight/heptapod-core/database";
+import { reviewSummary } from "../src/web/review-summary";
 import { ReviewIndex } from "../src/web/ReviewIndex";
-import { connectedRepository } from "../src/web/connected-repository";
+import { GitHubMetadataProvider } from "../src/web/GitHubIdentity";
+import { githubSourceFromPullRequestUrl, loadGitHubPullRequestMetadata } from "../src/web/github-metadata";
+import { SetupChecklist } from "../src/web/SetupChecklist";
+import { PullRequestLoadingSection } from "../src/web/OpenPullRequests";
+import { OpenPullRequestsSection } from "../src/web/OpenPullRequestsSection";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export default function ReviewIndexPage() {
+export default async function ReviewIndexPage({ searchParams }: { searchParams: Promise<{ includeClosed?: string }> }) {
   const reviews = listReviews();
-  return <ReviewIndex repository={connectedRepository()} reviews={reviews.map(({ id, title, summary, sourceUrl, baseRevision, headRevision, updatedAt, status, progress, error, payload }) => ({
-    id,
-    title,
-    summary,
-    sourceUrl,
-    baseRevision,
-    headRevision,
-    updatedAt,
-    status,
-    progress,
-    error,
-    updating: status === "pending" && payload !== null,
-    additions: payload?.source.stats.additions ?? null,
-    deletions: payload?.source.stats.deletions ?? null,
-  }))} />;
+  const metadata = Object.fromEntries(reviews.map((review) => [review.id,
+    loadGitHubPullRequestMetadata(githubSourceFromPullRequestUrl(review.sourceUrl)),
+  ]));
+  const includeClosed = (await searchParams).includeClosed === "true";
+  return <GitHubMetadataProvider promises={metadata}><ReviewIndex
+    setup={<SetupChecklist />}
+    openPullRequests={<Suspense fallback={<PullRequestLoadingSection includeClosed={includeClosed} />}>
+      <OpenPullRequestsSection includeClosed={includeClosed} importedIds={reviews.map((review) => review.id)} />
+    </Suspense>}
+    reviews={reviews.map(reviewSummary)} /></GitHubMetadataProvider>;
 }

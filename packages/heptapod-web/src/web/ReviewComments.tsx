@@ -2,8 +2,9 @@
 
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Check, ExternalLink, GripHorizontal, MessageSquare, Send, X } from "lucide-react";
-import type { RenderModel, RenderStep, ReviewComment, ReviewCommentTarget, ReviewDraft, ReviewDraftPreview } from "@thestraylight/heptapod/types";
-import { GitHubIcon } from "./GitHubIdentity";
+import type { RenderModel, RenderStep, ReviewComment, ReviewCommentTarget, ReviewDraft, ReviewDraftPreview } from "@thestraylight/heptapod-core/types";
+import { useToast, ToastMessage } from "./Toasts";
+import { GitHubIcon, useCachedGitHubPullRequestMetadata } from "./GitHubIdentity";
 
 interface DraftState { draft: ReviewDraft; preview: ReviewDraftPreview }
 interface AnchorRect { left: number; right: number; top: number; bottom: number }
@@ -33,12 +34,13 @@ interface ReviewCommentsContext {
 const CommentsContext = createContext<ReviewCommentsContext | null>(null);
 export function useReviewComments(): ReviewCommentsContext | null { return useContext(CommentsContext); }
 
-export function ReviewCommentsProvider({ model, reviewId, step, children, renderMarkdown }: {
-  model: RenderModel; reviewId: string; step: RenderStep; children: ReactNode; renderMarkdown: (source: string) => ReactNode;
+export function ReviewCommentsProvider({ model, reviewId, step, children, renderMarkdown, updating = false, disabled = false }: {
+  model: RenderModel; reviewId: string; step: RenderStep; children: ReactNode; renderMarkdown: (source: string) => ReactNode; updating?: boolean; disabled?: boolean;
 }) {
   const [state, setState] = useState<DraftState | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const notify = useToast();
   const [editor, setEditor] = useState<CommentEditor | null>(null);
   const [temporaryAnchor, setTemporaryAnchor] = useState<string | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -50,9 +52,10 @@ export function ReviewCommentsProvider({ model, reviewId, step, children, render
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const autosave = useRef<ReturnType<typeof setTimeout> | null>(null);
   const busy = useRef(false);
-  const endpoint = `/api/reviews/${encodeURIComponent(reviewId)}/draft`;
-  const enabled = Boolean(model.source.github);
-  const locked = Boolean(state?.draft.githubReviewId || state?.draft.publishedAt || state?.draft.publishing);
+  const endpoint = `/api/service/reviews/${encodeURIComponent(reviewId)}/draft`;
+  const githubMetadata = useCachedGitHubPullRequestMetadata(reviewId);
+  const enabled = Boolean(!disabled && model.source.github && (githubMetadata?.state === "open" || githubMetadata?.state === "draft"));
+  const locked = Boolean(updating || state?.draft.githubReviewId || state?.draft.publishedAt || state?.draft.publishing);
 
   const showTemporaryAnchor = (id: string | null) => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
@@ -76,17 +79,23 @@ export function ReviewCommentsProvider({ model, reviewId, step, children, render
   }, [step.id]);
 
   useEffect(() => {
-    if (!enabled) return;
+    // Drafts are unavailable during ingestion; resume loading when the update finishes.
+    if (!enabled || updating) return;
     const controller = new AbortController();
     void fetch(endpoint, { signal: controller.signal }).then(async (response) => {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? "Could not load review comments.");
       current.current = result; version.current = result.draft.version; setState(result);
     }).catch((error) => {
-      if (!controller.signal.aborted) setError(error instanceof Error ? error.message : String(error));
+      if (!controller.signal.aborted) { const message = error instanceof Error ? error.message : String(error); setError(message); notify(message); }
     });
     return () => controller.abort();
-  }, [enabled, endpoint]);
+  }, [enabled, endpoint, notify, updating]);
+
+  const reportError = (message: string) => {
+    setError(message);
+    notify(message, revision.current > persistedRevision.current ? { action: { label: "Retry saving", onClick: () => { void persist().catch(() => {}); } } } : undefined);
+  };
 
   const stage = (comments: ReviewComment[], summary: string, summaryIsCombined = current.current?.draft.summaryIsCombined) => {
     if (!current.current) throw new Error("The review is still loading.");
@@ -124,7 +133,7 @@ export function ReviewCommentsProvider({ model, reviewId, step, children, render
         if (savingRevision === revision.current) setSaving(false);
         return next;
       } catch (error) {
-        setError(error instanceof Error ? error.message : String(error));
+        reportError(error instanceof Error ? error.message : String(error));
         throw error;
       }
     });
@@ -169,13 +178,21 @@ export function ReviewCommentsProvider({ model, reviewId, step, children, render
     setError(null);
     try {
       const response = await fetch(`${endpoint}/publish`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: state.draft.version }) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Could not publish draft comments.");
+      const accepted = await response.json();
+      if (!response.ok) throw new Error(accepted.error ?? "Could not publish draft comments.");
+      let result;
+      while (true) {
+        const update = await fetch(`/api/service/jobs/${encodeURIComponent(accepted.jobId)}`, { cache: "no-store" });
+        const job = await update.json();
+        if (!update.ok || (job.status === "failed" || job.status === "cancelled")) throw new Error(job.error ?? "Publication was interrupted. Reload and retry.");
+        if (job.status === "ready") { result = job.result; break; }
+        await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+      }
       current.current = result; setState(result);
       if (tab && result.draft.githubUrl) tab.location.href = result.draft.githubUrl;
     } catch (error) {
       tab?.close();
-      setError(error instanceof Error ? error.message : String(error));
+      reportError(error instanceof Error ? error.message : String(error));
       // A partially published draft remains recoverable on the next attempt.
       const response = await fetch(endpoint).catch(() => null);
       if (response?.ok) { const refreshed = await response.json(); current.current = refreshed; setState(refreshed); }
@@ -212,7 +229,6 @@ export function ReviewCommentsProvider({ model, reviewId, step, children, render
     },
     flushCodeComments: () => { void persist().catch(() => {}); }, focusedComment, save, publish, renderMarkdown }}>
     {children}
-    {error && <div className="draft-error-toast" role="alert">{error}{revision.current > persistedRevision.current && <button onClick={() => { void persist().catch(() => {}); }}>Retry saving</button>}<button aria-label="Dismiss comment error" onClick={() => setError(null)}><X size={14} /></button></div>}
     {editor && <CommentDialog key={editor.id} editor={editor} onChange={setEditor} onClose={() => setEditor(null)} onSave={async (remove) => {
       const latest = current.current;
       if (!latest) return;
@@ -272,15 +288,14 @@ function CommentDialog({ editor, onChange, onClose, onSave }: {
       onChange={(event) => onChange({ ...editor, body: event.target.value })}
       onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if ((editor.body.trim() || existing) && !submitting) save(!editor.body.trim()); } }} />
     </div>
-    {context.error && <p className="draft-error" role="alert">{context.error}</p>}
   </div>;
 }
 
-export function CommentAnchor({ target, children, inline = false }: { target: ReviewCommentTarget; children: ReactNode; inline?: boolean }) {
+export function CommentAnchor({ target, children, inline = false, centered = false }: { target: ReviewCommentTarget; children: ReactNode; inline?: boolean; centered?: boolean }) {
   const context = useReviewComments();
   const instanceId = useId();
   const anchor = useRef<HTMLDivElement & HTMLSpanElement>(null);
-  const [gutter, setGutter] = useState(-30);
+  const [gutter, setGutter] = useState(-27);
   const [dismissedPreview, setDismissedPreview] = useState<string | null>(null);
   useEffect(() => {
     const element = anchor.current;
@@ -289,7 +304,7 @@ export function CommentAnchor({ target, children, inline = false }: { target: Re
     if (!container) return;
     const place = () => {
       const padding = parseFloat(getComputedStyle(container).paddingLeft);
-      setGutter(container.getBoundingClientRect().left + Math.max(2, padding - 30) - element.getBoundingClientRect().left);
+      setGutter(container.getBoundingClientRect().left + Math.max(2, padding - 30) + 3 - element.getBoundingClientRect().left);
     };
     place();
     const observer = new ResizeObserver(place); observer.observe(container); observer.observe(element);
@@ -300,7 +315,7 @@ export function CommentAnchor({ target, children, inline = false }: { target: Re
   const saved = context.state?.draft.comments.filter((comment) => comment.target.stepId === target.stepId && comment.target.anchor === target.anchor) ?? [];
   const hasComments = saved.some((comment) => comment.body.trim());
   const Tag = inline ? "span" : "div";
-  return <Tag ref={anchor} className={`comment-anchor${inline ? " comment-anchor-inline" : ""}${context.temporaryAnchor === instanceId ? " comment-hovered" : ""}`}
+  return <Tag ref={anchor} className={`comment-anchor${inline ? " comment-anchor-inline" : ""}${centered ? " comment-anchor-centered" : ""}${context.temporaryAnchor === instanceId ? " comment-hovered" : ""}`}
     onPointerMove={(event) => {
       event.stopPropagation();
       // Scrolling beneath a stationary pointer must not reveal another temporary icon.
@@ -309,6 +324,7 @@ export function CommentAnchor({ target, children, inline = false }: { target: Re
     onFocus={(event) => { event.stopPropagation(); context.showTemporaryAnchor(hasComments ? null : instanceId); }}
     onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) context.leaveTemporaryAnchor(instanceId); }}
     onMouseLeave={() => context.leaveTemporaryAnchor(instanceId)}>
+    <span className="comment-gutter" aria-hidden="true" style={{ left: gutter - 3 }} />
     <span className={`comment-bubbles${hasComments ? " has-comments" : ""}`} style={{ left: gutter }}>{(saved.length ? saved : [null]).map((comment) => <span className="comment-bubble-wrap" key={comment?.id ?? "new"} onMouseLeave={() => setDismissedPreview(null)}>
       <button className={`comment-bubble${comment?.body.trim() ? " comment-bubble-filled" : ""}`} aria-label={comment ? "Edit review comment" : "Add review comment"}
         disabled={!context.state || context.locked} onClick={(event) => { event.stopPropagation(); context.open(comment?.target ?? target, comment ?? undefined, event.currentTarget.getBoundingClientRect(), instanceId); }}><MessageSquare size={15} /></button>
@@ -400,7 +416,7 @@ export function FinalReview({ renderThread }: { renderThread: (comment: ReviewCo
   useEffect(() => {
     if (summaryInput.current) { summaryInput.current.style.height = "auto"; summaryInput.current.style.height = `${Math.max(140, summaryInput.current.scrollHeight)}px`; }
   }, [summary]);
-  if (!state) return <div className="draft-review"><header className="draft-review-header"><h1><GitHubIcon size={30} />GitHub review</h1></header><p>{context.error ?? "Loading your draft…"}</p></div>;
+  if (!state) return <div className="draft-review"><header className="draft-review-header"><h1><GitHubIcon size={30} />GitHub review</h1></header><p>{context.error ? "Unable to load your draft." : "Loading your draft…"}</p></div>;
   return <div className="draft-review"><div ref={headerStart} aria-hidden="true" /><header className={`draft-review-header${headerStuck ? " is-sticky" : ""}`}><h1><GitHubIcon size={30} />GitHub review</h1>
     <div className="draft-review-actions">
       {state.draft.githubUrl && <a href={state.draft.githubUrl} target="_blank" rel="noreferrer">Open GitHub review <ExternalLink size={14} /></a>}
@@ -423,7 +439,7 @@ export function FinalReview({ renderThread }: { renderThread: (comment: ReviewCo
         </article>;
       })}
     </div>
-    {state.preview.errors.length > 0 && <div className="draft-error" role="alert">Resolve the comment locations above before publishing.{state.preview.errors.filter((error) => !state.preview.threads.some((thread) => error === `${thread.path}: ${thread.error}`)).map((error) => <p key={error}>{error}</p>)}</div>}
+    <ToastMessage message={state.preview.errors.length ? `Resolve the comment locations before publishing. ${state.preview.errors.join(" ")}` : null} />
 
   </div>;
 }

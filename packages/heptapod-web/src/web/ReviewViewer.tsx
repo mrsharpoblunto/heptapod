@@ -9,6 +9,7 @@ import {
   ExternalLink,
   FoldVertical,
   Maximize2,
+  Menu,
   Minimize2,
   Minus,
   PanelRightClose,
@@ -26,12 +27,14 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type DragEvent,
   type ElementType,
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import hljs from "highlight.js/lib/common";
 import type {
@@ -44,11 +47,13 @@ import type {
   ReviewComment,
   ParsedTestCaseChange,
   TestFixtureRun,
-} from "@thestraylight/heptapod/types";
+} from "@thestraylight/heptapod-core/types";
 import {
   GitHubIcon,
+  useCachedGitHubPullRequestMetadata,
 } from "./GitHubIdentity";
 import { ReviewHeader } from "./ReviewHeader";
+import { ReviewProgress, type ReviewStatus } from "./ReviewProgress";
 import { AnnotatedMarkdown, CodeCommentBlock, CommentAnchor, FinalReview, ReviewCommentsProvider, useReviewComments } from "./ReviewComments";
 
 function classNames(...values: Array<string | false | null | undefined>): string {
@@ -105,10 +110,12 @@ function Inline({
   text,
   files,
   onSelectFile,
+  annotatable = true,
 }: {
   text: string;
   files: PatchFile[];
   onSelectFile?: (file: string) => void;
+  annotatable?: boolean;
 }): ReactNode {
   const pattern = /(!?\[[^\]]*\]\([^)]+\)|`[^`]+`|\*\*[^*]+\*\*)/g;
   const parts = String(text).split(pattern);
@@ -123,7 +130,7 @@ function Inline({
         : null;
       const file = path ? files.find((candidate) => candidate.path === path) : undefined;
       if (file && onSelectFile) {
-        return <FileLink file={file.path} active={false} inline onSelect={onSelectFile} key={index} />;
+        return <FileLink file={file.path} active={false} inline annotatable={annotatable} onSelect={onSelectFile} key={index} />;
       }
       return <a href={match[2]} target="_blank" rel="noreferrer" key={index}>{match[1]}</a>;
     }
@@ -169,26 +176,26 @@ function Markdown({
       if (!blocks.length) sections[0].title = heading[2];
       else sections.push({ start: blocks.length, title: heading[2] });
       const Tag = `h${Math.min(heading[1].length + 1, 5)}` as ElementType;
-      blocks.push(<Tag key={blocks.length}><Inline text={heading[2]} files={files} onSelectFile={onSelectFile} /></Tag>);
+      blocks.push(<Tag key={blocks.length}><Inline text={heading[2]} files={files} onSelectFile={onSelectFile} annotatable={annotatable} /></Tag>);
       index += 1;
       continue;
     }
     if (/^[-*]\s+/.test(line)) {
       const items: string[] = [];
       while (index < lines.length && /^[-*]\s+/.test(lines[index])) items.push(lines[index++].replace(/^[-*]\s+/, ""));
-      blocks.push(<ul key={blocks.length}>{items.map((item, itemIndex) => <li key={itemIndex}><Inline text={item} files={files} onSelectFile={onSelectFile} /></li>)}</ul>);
+      blocks.push(<ul key={blocks.length}>{items.map((item, itemIndex) => <li key={itemIndex}><Inline text={item} files={files} onSelectFile={onSelectFile} annotatable={annotatable} /></li>)}</ul>);
       continue;
     }
     if (/^\d+\.\s+/.test(line)) {
       const items: string[] = [];
       while (index < lines.length && /^\d+\.\s+/.test(lines[index])) items.push(lines[index++].replace(/^\d+\.\s+/, ""));
-      blocks.push(<ol key={blocks.length}>{items.map((item, itemIndex) => <li key={itemIndex}><Inline text={item} files={files} onSelectFile={onSelectFile} /></li>)}</ol>);
+      blocks.push(<ol key={blocks.length}>{items.map((item, itemIndex) => <li key={itemIndex}><Inline text={item} files={files} onSelectFile={onSelectFile} annotatable={annotatable} /></li>)}</ol>);
       continue;
     }
     if (line.startsWith("> ")) {
       const quote: string[] = [];
       while (index < lines.length && lines[index].startsWith("> ")) quote.push(lines[index++].slice(2));
-      blocks.push(<blockquote key={blocks.length}><Inline text={quote.join(" ")} files={files} onSelectFile={onSelectFile} /></blockquote>);
+      blocks.push(<blockquote key={blocks.length}><Inline text={quote.join(" ")} files={files} onSelectFile={onSelectFile} annotatable={annotatable} /></blockquote>);
       continue;
     }
     const paragraph = [line.trim()];
@@ -196,7 +203,7 @@ function Markdown({
     while (index < lines.length && lines[index].trim() && !/^(#{1,4})\s|^```|^[-*]\s+|^\d+\.\s+|^>\s+/.test(lines[index])) {
       paragraph.push(lines[index++].trim());
     }
-    blocks.push(<p key={blocks.length}><Inline text={paragraph.join(" ")} files={files} onSelectFile={onSelectFile} /></p>);
+    blocks.push(<p key={blocks.length}><Inline text={paragraph.join(" ")} files={files} onSelectFile={onSelectFile} annotatable={annotatable} /></p>);
   }
   const key = annotationKey ?? `markdown:${Array.from(source).reduce((hash, char) => ((hash << 5) - hash + char.charCodeAt(0)) | 0, 0)}`;
   return <div className="markdown">{annotatable ? sections.filter((group) => group.start < blocks.length).map((group, index) =>
@@ -207,16 +214,16 @@ function EvidenceGallery({ evidence }: { evidence: Evidence[] }): ReactNode {
   const { reviewId } = useContext(ReviewRuntimeContext);
   if (evidence.length === 0) return null;
   return <div className="evidence-grid">{evidence.map((item) => {
+    const assetId = item.url.match(/^https:\/\/(?:github\.com\/user-attachments\/assets\/|(?:private-user-images|user-images)\.githubusercontent\.com\/).*?([a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12})/i)?.[1];
+    const mediaUrl = reviewId && assetId
+      ? `/api/reviews/${encodeURIComponent(reviewId)}/github-media/${assetId}`
+      : item.url;
     if (item.kind === "image") return <a href={item.sourceUrl ?? item.url} target="_blank" rel="noreferrer" key={item.url}>
-      <img src={item.url} alt={item.label} />
+      <img src={mediaUrl} alt={item.label} />
     </a>;
     if (item.kind === "video") {
-      const assetId = item.url.match(/([a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12})/i)?.[1];
-      const videoUrl = reviewId && assetId
-        ? `/api/reviews/${encodeURIComponent(reviewId)}/github-media/${assetId}`
-        : item.url;
       return <figure className="evidence-video" key={item.url}>
-        <video controls playsInline preload="metadata" src={videoUrl}>
+        <video controls playsInline preload="metadata" src={mediaUrl}>
           <a href={item.url}>Open video evidence</a>
         </video>
         <figcaption><a href={item.sourceUrl ?? item.url} target="_blank" rel="noreferrer">{item.label}</a></figcaption>
@@ -728,7 +735,7 @@ function FileLink({
   const separator = file.lastIndexOf("/");
   const directory = separator === -1 ? "" : file.slice(0, separator + 1);
   const filename = separator === -1 ? file : file.slice(separator + 1);
-  const wrap = (content: ReactNode) => annotatable ? <CommentAnchor target={target} inline={inline}>{content}</CommentAnchor> : content;
+  const wrap = (content: ReactNode) => annotatable ? <CommentAnchor target={target} inline={inline} centered>{content}</CommentAnchor> : content;
   if (inline) return wrap(<button className="file-link file-link-inline" onClick={() => onSelect(file)} title={file}>
     <strong className="file-link-filename">{filename}</strong>
   </button>);
@@ -881,15 +888,12 @@ function RefactorStep({ step, selectedFile, onSelectFile }: StepViewProps): Reac
     {step.body && <Markdown source={step.body} files={allStepFiles(step)} onSelectFile={onSelectFile} />}
     <div className="refactor-sections">
       {interfaces.map((item, index) => <section className="refactor-section" key={index}>
-        <CommentAnchor target={item.file || item.callsites[0]?.file
-          ? { kind: "file", stepId: step.id, anchor: `refactor:${index}`, path: item.file ?? item.callsites[0].file }
-          : { kind: "section", stepId: step.id, anchor: `refactor:${index}`, section: item.name }}>
         <div className="interface-change">
           <h3>{item.name}</h3>
           {item.description && <Markdown source={item.description} annotationKey={`interface:${index}`} section={item.name} />}
           {(item.before || item.after) && <div className="before-after">
-            {item.before && <div><span>Before</span><Markdown source={item.before} files={allStepFiles(step)} onSelectFile={onSelectFile} /></div>}
-            {item.after && <div><span>After</span><Markdown source={item.after} files={allStepFiles(step)} onSelectFile={onSelectFile} /></div>}
+            {item.before && <div><span>Before</span><Markdown source={item.before} files={allStepFiles(step)} onSelectFile={onSelectFile} annotatable={false} /></div>}
+            {item.after && <div><span>After</span><Markdown source={item.after} files={allStepFiles(step)} onSelectFile={onSelectFile} annotatable={false} /></div>}
           </div>}
           {item.file && <div className="refactor-file-group">
             <div className="refactor-subheading">Source</div>
@@ -902,7 +906,6 @@ function RefactorStep({ step, selectedFile, onSelectFile }: StepViewProps): Reac
             <ChangedFileList files={item.callsites} step={step} selectedFile={selectedFile} onSelectFile={onSelectFile} />
           </div>
         </div>
-        </CommentAnchor>
       </section>)}
     </div>
   </>;
@@ -1048,6 +1051,8 @@ function DetailPanel({
   onResizeKeyDown,
   reviewSummary = false,
   onSelectReviewFile,
+  mobile = false,
+  panelRef,
 }: StepViewProps & {
   source: RenderModel["source"];
   tabs: string[];
@@ -1065,6 +1070,8 @@ function DetailPanel({
   onResizePointerMove: (event: PointerEvent<HTMLDivElement>) => void;
   onResizePointerUp: (event: PointerEvent<HTMLDivElement>) => void;
   onResizeKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
+  mobile?: boolean;
+  panelRef?: RefObject<HTMLElement | null>;
 }): ReactNode {
   const [draggingTab, setDraggingTab] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -1108,9 +1115,10 @@ function DetailPanel({
     ? <PanelRightOpen aria-hidden="true" size={16} />
     : <PanelRightClose aria-hidden="true" size={16} />}
   </button>;
-  if (collapsed) return toggle;
+  if (collapsed) return mobile ? null : toggle;
   const selectedGitHubUrl = selected ? githubFileUrl(source, selected) : null;
-  return <aside className="detail-panel">
+  return <aside id="review-detail-panel" ref={panelRef} className="detail-panel" role={mobile ? "dialog" : undefined} aria-modal={mobile || undefined} aria-label="Review details">
+    {mobile && <div className="mobile-panel-header"><strong>Review details</strong><button aria-label="Close review details" onClick={onToggle}><X size={22} aria-hidden="true" /></button></div>}
     <div
       aria-label="Resize details panel"
       aria-orientation="vertical"
@@ -1158,6 +1166,7 @@ function DetailPanel({
           key={file}
         >
           <button
+            key="select"
             aria-selected={selectedFile === file}
             aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
             aria-description="Drag to reorder, or press Alt and an arrow key."
@@ -1166,10 +1175,10 @@ function DetailPanel({
             role="tab"
             title={file}
           >{file.split("/").at(-1)}</button>
-          <button aria-label={`Close ${file}`} className="close-tab" onClick={() => onCloseFile(file)} title={`Close ${file}`}><X aria-hidden="true" size={13} /></button>
+          <button key="close" aria-label={`Close ${file}`} className="close-tab" onClick={() => onCloseFile(file)} title={`Close ${file}`}><X aria-hidden="true" size={13} /></button>
         </div>)}
       </div>
-      {toggle}
+      {!mobile && toggle}
     </div>
     {selectedFile === null && <div className="detail-panel-content">
       {reviewSummary ? <ReviewSummaryRail onSelectFile={onSelectReviewFile!} />
@@ -1212,20 +1221,38 @@ function ReviewThread({ comment, model, onSelectFile }: { comment: ReviewComment
   </>;
 }
 
+const mobileReviewQuery = "(max-width: 900px)";
+function subscribeMobileReview(onChange: () => void) {
+  const query = window.matchMedia(mobileReviewQuery);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+function isMobileReview() { return window.matchMedia(mobileReviewQuery).matches; }
+function desktopReviewSnapshot() { return false; }
+
 export function ReviewViewer({
   data,
   reviewId,
   updatedAt,
   updating = false,
+  status = updating ? "pending" : "ready",
+  progress = null,
 }: {
   data: RenderModel;
   reviewId?: string;
   updatedAt: string;
   updating?: boolean;
+  status?: ReviewStatus;
+  progress?: string | null;
 }): ReactNode {
   const router = useRouter();
-  const [liveStatus, setLiveStatus] = useState<{ updatedAt: string; pending: boolean } | null>(null);
-  const isUpdating = liveStatus?.updatedAt === updatedAt ? liveStatus.pending : updating;
+  const mobile = useSyncExternalStore(subscribeMobileReview, isMobileReview, desktopReviewSnapshot);
+  const [mobilePanel, setMobilePanel] = useState<"steps" | "details" | null>(null);
+  const stepNavRef = useRef<HTMLElement>(null);
+  const detailPanelRef = useRef<HTMLElement>(null);
+  const [liveStatus, setLiveStatus] = useState<{ updatedAt: string; status: ReviewStatus; progress: string | null } | null>(null);
+  const currentStatus = liveStatus?.updatedAt === updatedAt ? liveStatus : { status, progress };
+  const isUpdating = currentStatus.status === "pending" || currentStatus.status === "preparing";
 
   useEffect(() => {
     if (!reviewId) return;
@@ -1233,13 +1260,13 @@ export function ReviewViewer({
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
-        const response = await fetch(`/api/reviews?review=${encodeURIComponent(reviewId)}`, { cache: "no-store" });
+        const response = await fetch(`/api/service/reviews?review=${encodeURIComponent(reviewId)}`, { cache: "no-store" });
         if (!response.ok) return;
-        const review = await response.json() as { status: "pending" | "ready" | "failed"; updatedAt: string };
+        const review = await response.json() as { status: ReviewStatus; updatedAt: string; progress: string | null };
         if (stopped) return;
-        const pending = review.status === "pending";
-        setLiveStatus((current) => current?.updatedAt === updatedAt && current.pending === pending ? current : { updatedAt, pending });
-        if (review.status !== "pending" && (review.updatedAt !== updatedAt || updating)) router.refresh();
+        const pending = review.status === "pending" || review.status === "preparing";
+        setLiveStatus((current) => current?.updatedAt === updatedAt && current.status === review.status && current.progress === review.progress ? current : { updatedAt, status: review.status, progress: review.progress });
+        if (!pending && (review.updatedAt !== updatedAt || updating)) router.refresh();
       } catch {
         // Keep the current review available through a transient polling failure.
       } finally {
@@ -1251,6 +1278,7 @@ export function ReviewViewer({
   }, [reviewId, router, updatedAt, updating]);
 
   const [stepId, setStepId] = useState<string | null>(data.steps[0].id);
+  const selectStep = (id: string | null) => { setStepId(id); setMobilePanel(null); };
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [detailWidth, setDetailWidth] = useState(420);
   const [tabs, setTabs] = useState<string[]>([""]);
@@ -1258,7 +1286,9 @@ export function ReviewViewer({
   const [scrollTarget, setScrollTarget] = useState<DiffTarget | null>(null);
   const [reviewFileSteps, setReviewFileSteps] = useState<Record<string, number>>({});
   const [detailPreferencesLoaded, setDetailPreferencesLoaded] = useState(false);
-  const githubReview = Boolean(data.source.github);
+  const githubMetadata = useCachedGitHubPullRequestMetadata(reviewId ?? String(data.source.github?.number ?? ""));
+  const githubMetadataLoading = Boolean(data.source.github && githubMetadata === undefined);
+  const githubReview = Boolean(!mobile && data.source.github && (githubMetadata?.state === "open" || githubMetadata?.state === "draft"));
   const finalReview = githubReview && stepId === null;
   const stepIndex = finalReview ? data.steps.length : Math.max(0, data.steps.findIndex((item) => item.id === stepId));
   const totalSteps = data.steps.length + Number(githubReview);
@@ -1268,6 +1298,25 @@ export function ReviewViewer({
   const stepContentRef = useRef<HTMLDivElement>(null);
   const initializedFromLocation = useRef(false);
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
+
+  useEffect(() => {
+    if (!mobile || !mobilePanel) return;
+    const panel = mobilePanel === "steps" ? stepNavRef.current : detailPanelRef.current;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusable = () => [...(panel?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], textarea:not(:disabled), input:not(:disabled), [tabindex="0"]') ?? [])].filter((element) => element.getClientRects().length > 0);
+    focusable()[0]?.focus();
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); setMobilePanel(null); }
+      if (event.key === "Tab") {
+        const elements = focusable();
+        const first = elements[0], last = elements.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => { window.removeEventListener("keydown", onKeyDown); if (previousFocus?.isConnected) previousFocus.focus(); };
+  }, [mobile, mobilePanel]);
 
   const resizeDetailPanel = (width: number) => {
     setDetailWidth(Math.min(720, Math.max(320, width)));
@@ -1297,6 +1346,7 @@ export function ReviewViewer({
   };
 
   const openFile = (file: string, target?: DiffTarget) => {
+    if (mobile) setMobilePanel("details");
     if (!file) {
       setSelectedFile(null);
       setScrollTarget(null);
@@ -1305,7 +1355,7 @@ export function ReviewViewer({
     setTabs((files) => files.includes(file) ? files : [...files, file]);
     setSelectedFile(file);
     setScrollTarget(target ? { ...target } : null);
-    setRightCollapsed(false);
+    if (!mobile) setRightCollapsed(false);
   };
 
   const reorderTab = (from: string, to: string) => {
@@ -1344,6 +1394,7 @@ export function ReviewViewer({
 
   useEffect(() => {
     if (!initializedFromLocation.current) {
+      if (githubMetadataLoading && window.location.hash === "#review-draft") return;
       initializedFromLocation.current = true;
       if (githubReview && window.location.hash === "#review-draft") { setStepId(null); return; }
       const requestedIndex = data.steps.findIndex((item) => `#${item.id}` === window.location.hash);
@@ -1358,11 +1409,11 @@ export function ReviewViewer({
     stepContentRef.current?.scrollTo({ top: 0 });
     history.replaceState(null, "", finalReview ? "#review-draft" : `#${step.id}`);
     document.title = `${finalReview ? "Review" : `${step.number}. ${step.title}`} — ${data.title}`;
-  }, [data.steps, data.title, step, finalReview, githubReview]);
+  }, [data.steps, data.title, step, finalReview, githubReview, githubMetadataLoading]);
 
-  return <ReviewCommentsProvider key={`${reviewId ?? data.source.base}:${data.source.head}`} model={data} reviewId={reviewId ?? String(data.source.github?.number ?? "")} step={step} renderMarkdown={(source) => <Markdown source={source} annotatable={false} />}><ReviewRuntimeContext.Provider value={{ reviewId }}><div className="app-shell">
-    <header className="topbar">
-      <ReviewHeader updating={isUpdating} review={{
+  return <ReviewCommentsProvider disabled={mobile} key={`${reviewId ?? data.source.base}:${data.source.head}`} model={data} reviewId={reviewId ?? String(data.source.github?.number ?? "")} step={step} updating={currentStatus.status !== "ready"} renderMarkdown={(source) => <Markdown source={source} annotatable={false} />}><ReviewRuntimeContext.Provider value={{ reviewId }}><div className={`app-shell${isUpdating ? " app-shell-updating" : ""}${mobile && mobilePanel ? ` mobile-${mobilePanel}-open` : ""}`}>
+    <header className="topbar" inert={mobile && mobilePanel !== null}>
+      <ReviewHeader review={{
         id: reviewId ?? `${data.source.base}/${data.source.head}`,
         title: data.title,
         summary: data.summary,
@@ -1372,8 +1423,14 @@ export function ReviewViewer({
         updatedAt,
         additions: data.source.stats.additions,
         deletions: data.source.stats.deletions,
-      }} />
+      }}>
+        {isUpdating && <ReviewProgress status={currentStatus.status} updating progress={currentStatus.progress} />}
+      </ReviewHeader>
     </header>
+    <div className="mobile-review-controls" inert={mobilePanel !== null}>
+      <button className="mobile-steps-toggle" aria-label="Open review steps" aria-controls="review-step-menu" aria-expanded={mobilePanel === "steps"} onClick={() => setMobilePanel("steps")}><Menu size={22} aria-hidden="true" /></button>
+      <button className="mobile-details-toggle" aria-label="Open review details" aria-controls="review-detail-panel" aria-expanded={mobilePanel === "details"} onClick={() => setMobilePanel("details")}><PanelRightOpen size={22} aria-hidden="true" /></button>
+    </div>
     <div
       className="workspace"
       style={{
@@ -1381,9 +1438,10 @@ export function ReviewViewer({
         "--detail-width": `${rightCollapsed ? 0 : detailWidth}px`,
       } as CSSProperties}
     >
-      <nav className="step-nav" aria-label="Narrative steps">
+      <nav id="review-step-menu" ref={stepNavRef} className="step-nav" aria-label="Narrative steps" role={mobile ? "dialog" : undefined} aria-modal={mobile && mobilePanel === "steps" || undefined}>
+        <div className="mobile-panel-header"><strong>Review steps</strong><button aria-label="Close review steps" onClick={() => setMobilePanel(null)}><X size={22} aria-hidden="true" /></button></div>
         {data.steps.map((item, index) => {
-          return <button className={classNames("step-button", index === stepIndex && "active")} onClick={() => setStepId(item.id)} key={item.id}>
+          return <button className={classNames("step-button", index === stepIndex && "active")} onClick={() => selectStep(item.id)} key={item.id}>
             <span className="step-number">{String(index + 1).padStart(2, "0")}</span>
             <span className="step-copy"><span>{item.title}</span><small>{kindLabel(item.kind)}</small></span>
             <span className={classNames(
@@ -1393,11 +1451,11 @@ export function ReviewViewer({
             )} />
           </button>;
         })}
-        {githubReview && <button className={classNames("step-button", "review-step-button", finalReview && "active")} onClick={() => setStepId(null)}>
+        {githubReview && <button className={classNames("step-button", "review-step-button", finalReview && "active")} onClick={() => selectStep(null)}>
           <span className="step-number">{String(totalSteps).padStart(2, "0")}</span><span className="step-copy"><span>Review</span><small>Prepare GitHub draft</small></span>
         </button>}
       </nav>
-      <main className="main-panel">
+      <main className="main-panel" inert={mobile && mobilePanel !== null}>
         <div className="step-content" ref={stepContentRef}>
           {finalReview ? <FinalReview renderThread={(comment) => <ReviewThread comment={comment} model={data} onSelectFile={(path, index, target) => {
             setReviewFileSteps((current) => ({ ...current, [path]: index })); openFile(path, target);
@@ -1406,11 +1464,11 @@ export function ReviewViewer({
         </div>
         <div className="step-pager">
           <div className="step-control" aria-label="Step navigation">
-            <button aria-label="Previous step" disabled={stepIndex === 0} onClick={() => setStepId(data.steps[stepIndex - 1].id)}>
+            <button aria-label="Previous step" disabled={stepIndex === 0} onClick={() => selectStep(data.steps[stepIndex - 1].id)}>
               <ChevronLeft aria-hidden="true" size={17} />
             </button>
             <span>{stepIndex + 1} / {totalSteps}</span>
-            <button aria-label="Next step" disabled={stepIndex === totalSteps - 1} onClick={() => setStepId(data.steps[stepIndex + 1]?.id ?? null)}>
+            <button aria-label="Next step" disabled={stepIndex === totalSteps - 1} onClick={() => selectStep(data.steps[stepIndex + 1]?.id ?? null)}>
               <ChevronRight aria-hidden="true" size={17} />
             </button>
           </div>
@@ -1433,8 +1491,10 @@ export function ReviewViewer({
         onCloseFile={closeFile}
         scrollTarget={scrollTarget}
         detailWidth={detailWidth}
-        collapsed={rightCollapsed}
-        onToggle={() => setRightCollapsed((collapsed) => !collapsed)}
+        collapsed={mobile ? mobilePanel !== "details" : rightCollapsed}
+        mobile={mobile}
+        panelRef={detailPanelRef}
+        onToggle={() => mobile ? setMobilePanel(null) : setRightCollapsed((collapsed) => !collapsed)}
         onResizePointerDown={handleResizePointerDown}
         onResizePointerMove={handleResizePointerMove}
         onResizePointerUp={handleResizePointerUp}

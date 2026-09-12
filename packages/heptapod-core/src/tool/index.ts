@@ -30,3 +30,12 @@ export type {
   RenderModel,
   RenderStep,
 } from "./types.js";
+
+export { captureNarrative } from "./capture.js";
+export { ingestNarrative } from "./ingest.js";
+export { verifyNarrative } from "./verify.js";
+export { prepareReview } from "./prepare.js";
+export { resolvePullRequest, resolveRevisionRange } from "./review-source.js";
+export { beginReviewPreparation } from "./database.js";
+
+export { captureReview, validateReview, ingestReview } from "./commands.js";

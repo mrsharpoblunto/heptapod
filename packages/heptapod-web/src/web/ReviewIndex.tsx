@@ -1,107 +1,52 @@
 "use client";
 
-import { LoaderCircle, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
-import { ReviewHeader, reviewPath, type ReviewHeaderData } from "./ReviewHeader";
-import type { ConnectedRepository } from "./connected-repository";
-import { HeptapodBackdrop } from "./HeptapodBackdrop";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { reviewPath } from "./ReviewHeader";
+import { ReviewCard, type ReviewSummary } from "./ReviewCard";
+import { useDeleteReview } from "./useDeleteReview";
+import { ReviewListContext } from "./ReviewListContext";
+export type { ReviewSummary } from "./ReviewCard";
 
-interface ReviewSummary extends ReviewHeaderData {
-  status: "pending" | "ready" | "failed";
-  progress: string | null;
-  error: string | null;
-  updating?: boolean;
-}
-
-function ReviewCard({
-  review,
-  deleting,
-  onDelete,
-  onOpen,
-}: {
-  review: ReviewSummary;
-  deleting: boolean;
-  onDelete: (review: ReviewSummary) => void;
-  onOpen: (review: ReviewSummary) => void;
-}): ReactNode {
-  return <article
-    className="review-list-item"
-    onClick={(event) => {
-      if (event.target instanceof Element && event.target.closest("a, button")) return;
-      onOpen(review);
-    }}
-  >
-    <div className="review-list-content">
-      <ReviewHeader review={review} compact updating={review.updating}>
-        {review.status !== "ready" && <div className={`review-state review-state-${review.status}`}>
-          {review.status === "pending"
-            ? <LoaderCircle aria-hidden="true" className="progress-spinner" size={15} />
-            : <span className="failure-dot" />}
-          <span>{review.status === "pending" ? review.progress ?? "Preparing ingestion" : review.error ?? "Ingestion failed"}</span>
-        </div>}
-      </ReviewHeader>
-    </div>
-    <button
-      aria-label={`Delete review ${review.id}`}
-      className="review-delete"
-      disabled={deleting}
-      onClick={() => onDelete(review)}
-      title="Delete review and cached narrative"
-    >
-      <Trash2 aria-hidden="true" size={16} />
-    </button>
-  </article>;
-}
-
-export function ReviewIndex({ reviews, repository }: { reviews: ReviewSummary[]; repository: ConnectedRepository }) {
+export function ReviewIndex({ reviews: initialReviews, setup, openPullRequests }: { reviews: ReviewSummary[]; setup?: ReactNode; openPullRequests?: ReactNode }) {
   const router = useRouter();
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [snapshot, setSnapshot] = useState<{ initial: ReviewSummary[]; reviews: ReviewSummary[] } | null>(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const refresh = useCallback(() => setRefreshVersion((version) => version + 1), []);
+  const reviews = snapshot?.initial === initialReviews ? snapshot.reviews : initialReviews;
+  const context = useMemo(() => ({ reviews, refresh }), [reviews, refresh]);
+  const { deleting, remove, confirmation } = useDeleteReview(false, refresh);
 
   useEffect(() => {
-    const interval = reviews.some((review) => review.status === "pending") ? 1_000 : 5_000;
-    const timer = window.setInterval(() => router.refresh(), interval);
-    return () => window.clearInterval(timer);
-  }, [reviews, router]);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const controller = new AbortController();
+    let current = initialReviews;
+    const poll = async () => {
+      try {
+        const response = await fetch("/api/reviews", { cache: "no-store", signal: controller.signal });
+        if (response.ok) {
+          const next = await response.json() as ReviewSummary[];
+          if (!Array.isArray(next) || next.some((review) => typeof review.title !== "string" || typeof review.summary !== "string" || typeof review.hasPayload !== "boolean")) return;
+          if (!stopped) {
+            current = next;
+            setSnapshot((previous) => previous?.initial === initialReviews && JSON.stringify(previous.reviews) === JSON.stringify(next) ? previous : { initial: initialReviews, reviews: next });
+          }
+        }
+      } catch { /* Keep the current list when a polling request fails. */ }
+      finally { if (!stopped) timer = setTimeout(poll, current.some((review) => review.status === "pending" || review.status === "preparing") ? 1_000 : 5_000); }
+    };
+    timer = setTimeout(poll, refreshVersion ? 0 : 1_000);
+    return () => { stopped = true; clearTimeout(timer); controller.abort(); };
+  }, [initialReviews, refreshVersion]);
 
-  const remove = async (review: ReviewSummary) => {
-    if (!window.confirm(`Delete review ${review.id} and its cached narrative files?`)) return;
-    setDeleting(review.id);
-    setError(null);
-    try {
-      const response = await fetch(`/api/reviews?review=${encodeURIComponent(review.id)}`, { method: "DELETE" });
-      if (!response.ok) {
-        const result = await response.json() as { error?: string };
-        throw new Error(result.error ?? `Delete failed with HTTP ${response.status}`);
-      }
-      router.refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setDeleting(null);
-    }
-  };
-
-  return <><HeptapodBackdrop /><main className="review-index-scene">
+  return <ReviewListContext.Provider value={context}><main className="review-index-scene">
     <div className="review-index">
-      <h1 className="review-index-title">HEPTAPOD</h1>
-      <section className="ingestion-help" aria-label="Ingestion instructions">
-        <p>Connected repository: {repository.githubUrl
-          ? <a href={repository.githubUrl} target="_blank" rel="noreferrer">{repository.name}</a>
-          : <strong>{repository.name}</strong>}</p>
-        <p>Use the installed agent skill to author the narrative between capture and ingestion.</p>
-        <div className="ingestion-commands">
-          <div><span>Pull request</span><code>pnpm exec heptapod capture --pr &lt;number&gt;</code><code>pnpm exec heptapod ingest --pr &lt;number&gt;</code></div>
-          <div><span>Revision range</span><code>pnpm exec heptapod capture --rev &lt;base&gt;...&lt;target&gt;</code><code>pnpm exec heptapod ingest --rev &lt;base&gt;...&lt;target&gt;</code></div>
-        </div>
-        <div className="github-review-help"><h2>Prepare a GitHub review</h2>
-          <p>Install <a href="https://cli.github.com/" target="_blank" rel="noreferrer">GitHub CLI</a> on the machine running Heptapod. Sign in with an account that can review the PR.</p>
-          <div className="github-auth-commands"><code>gh auth login</code><code>gh auth status</code></div>
-          <p>Authentication is shared across repositories. Annotate a PR review, open the final Review step, then publish your draft comments. Submit the finished review on GitHub.</p>
-        </div>
-      </section>
-      {error && <p className="review-index-error">{error}</p>}
+      <header className="review-index-header">
+        <h1 className="review-index-title">HEPTAPOD</h1>
+        {setup}
+      </header>
+      <h2 className="review-section-title">Imported reviews</h2>
       {reviews.length === 0
         ? <div className="empty-state">No reviews have been ingested yet.</div>
         : <div className="review-list">
@@ -113,6 +58,7 @@ export function ReviewIndex({ reviews, repository }: { reviews: ReviewSummary[];
             onOpen={(item) => router.push(reviewPath(item.id))}
           />)}
         </div>}
+      {openPullRequests}
     </div>
-  </main></>;
+  </main>{confirmation}</ReviewListContext.Provider>;
 }

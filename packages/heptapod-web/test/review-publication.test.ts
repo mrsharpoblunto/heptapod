@@ -4,8 +4,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test, vi } from "vitest";
-import { getReviewDraft, saveReviewDraft, upsertReview } from "@thestraylight/heptapod/database";
-import type { RenderModel, ReviewComment } from "@thestraylight/heptapod/types";
+import { getReviewDraft, saveReviewDraft, upsertReview } from "@thestraylight/heptapod-core/database";
+import type { RenderModel, ReviewComment } from "@thestraylight/heptapod-core/types";
 import { githubGraphql, isSameOrigin, loadDraftState, publishReviewDraft } from "../src/web/review-draft-service";
 
 const directories: string[] = [];

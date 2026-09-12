@@ -6,12 +6,14 @@ export interface ReviewSourceSelection {
   base: string;
   head: string;
   githubPrUrl?: string;
+  title?: string;
 }
 
 interface GitHubPullRequest {
   baseRefOid?: unknown;
   headRefOid?: unknown;
   url?: unknown;
+  title?: unknown;
 }
 
 export function parsePullRequestNumber(value: string): number {
@@ -47,7 +49,7 @@ function ensureCommit(repo: string, revision: string, fallbackRef?: string): str
 
 export function resolvePullRequest(repo: string, value: string): ReviewSourceSelection {
   const number = parsePullRequestNumber(value);
-  const result = run("gh", ["api", `repos/{owner}/{repo}/pulls/${number}`, "--jq", "{baseRefOid: .base.sha, headRefOid: .head.sha, url: .html_url}"], {
+  const result = run("gh", ["api", `repos/{owner}/{repo}/pulls/${number}`, "--jq", "{baseRefOid: .base.sha, headRefOid: .head.sha, url: .html_url, title: .title}"], {
     cwd: repo,
     allowFailure: true,
   });
@@ -65,7 +67,7 @@ export function resolvePullRequest(repo: string, value: string): ReviewSourceSel
   }
   const base = ensureCommit(repo, pullRequest.baseRefOid);
   const head = ensureCommit(repo, pullRequest.headRefOid, `pull/${number}/head`);
-  return { id: String(number), base, head, githubPrUrl: pullRequest.url };
+  return { id: String(number), base, head, githubPrUrl: pullRequest.url, title: typeof pullRequest.title === "string" ? pullRequest.title : undefined };
 }
 
 export function resolveRevisionRange(repo: string, value: string): ReviewSourceSelection {

@@ -19,7 +19,9 @@ Run every Heptapod command from inside the target repository. The repository mus
 
 Choose exactly one source selector. Use `--pr <number>` for a GitHub pull request. Use `--rev '<base>...<target>'` for a local revision comparison. The PR review ID is its number; the revision review ID printed by `capture` is `<full-base-sha>/<full-target-sha>`.
 
-Run the packaged Heptapod CLI:
+When updating an existing review, first read its cached `narrative.json` and compare `source.base`, `source.head`, and `source.github.pullRequestUrl` with the current PR. Obtain the current comparison with `gh api repos/{owner}/{repo}/pulls/<number> --jq '{base: .base.sha, head: .head.sha, url: .html_url}'`; compare both full commit IDs, including the base. If they match and the metadata files are present, run `pnpm exec heptapod ingest --pr <number>` directly to rerun validation and tests using the existing narrative. Do not capture again, rewrite the narrative, or regenerate patches for an unchanged comparison. If ingestion fails, report or fix the specific validation/test issue; do not recapture merely because a test failed. If either revision changed or the metadata is missing, use the capture-and-author workflow. The homepage refresh action performs this check itself and only launches an agent when preparation is needed.
+
+For a new comparison, run the packaged Heptapod CLI:
 
 ```bash
 pnpm exec heptapod capture \
@@ -30,7 +32,9 @@ pnpm exec heptapod capture \
   --rev '<base-ref>...<target-ref>'
 ```
 
-`capture` pins full commit IDs and creates `source.diff`, `narrative.json`, `steps/`, and `diffs/` under `node_modules/.cache/heptapod/runs/<review-id>`. It refuses to overwrite existing artifacts. Treat the captured `source.diff` as the byte-level source of truth; do not edit it. Use this resolved run directory for all narrative authoring; do not ask the user for or invent another artifact path.
+`capture` immediately creates a database entry in the **Preparing review** state, prints the review `id`, absolute `metadataDirectory` (also available as `output`), and `narrative` manifest path, and pins full commit IDs and creates `source.diff`, `narrative.json`, `steps/`, and `diffs/` under `node_modules/.cache/heptapod/runs/<review-id>`. It refuses to overwrite existing artifacts. Treat the captured `source.diff` as the byte-level source of truth; do not edit it. Use the exact `metadataDirectory` from the command output for all narrative authoring; do not ask the user for or invent another artifact path.
+
+If Heptapod launched you from the homepage and supplied an already captured metadata directory, use that directory without running capture again. Author and validate the metadata, then stop: the launching process validates independently and runs ingestion after you exit successfully. Do not ingest or start a site in this managed preparation flow.
 
 Read [references/artifact-format.md](references/artifact-format.md) before authoring the manifest or step files.
 
@@ -99,6 +103,6 @@ pnpm exec heptapod ingest \
 
 For a revision review, replace `--pr <pull-request-number>` with `--rev '<base-ref>...<target-ref>'`. `ingest` resolves the cached narrative ID itself; it does not accept an arbitrary `--id`.
 
-The command first creates a pending database record, then finds the matching cached narrative, validates it, tests every reconstructed step, and prints the review's complete URL. The Heptapod site reflects live ingestion progress and re-ingested changes without regenerating a static asset. Give that complete URL to the user, along with the cached run directory, review ID, pinned base/head, narrative step count, exact-verification result, and any observed test mismatches. Do not claim completion if validation fails.
+The review remains **Preparing review** while you author and validate metadata. Ingestion changes it to the ingestion progress state, validates the matching cached narrative, tests every reconstructed step, and prints the review's complete URL. The Heptapod site reflects live ingestion progress and re-ingested changes without regenerating a static asset. Give that complete URL to the user, along with the cached run directory, review ID, pinned base/head, narrative step count, exact-verification result, and any observed test mismatches. Do not claim completion if validation fails.
 
 If no Heptapod site is already running, start the separately packaged site from the same repository with `pnpm exec heptapod-web --port <port>`. The CLI and site automatically share `node_modules/.cache/heptapod/reviews.sqlite` beneath the Git root; do not ask the user for a database path.

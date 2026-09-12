@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getReview } from "@thestraylight/heptapod/database";
+import { getReview } from "@thestraylight/heptapod-core/database";
 import {
   githubSourceFromPullRequestUrl,
   loadGitHubPullRequestMetadata,

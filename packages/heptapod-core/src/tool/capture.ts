@@ -1,5 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import type { AgentId } from "./agents.js";
+import { beginReviewPreparation } from "./database.js";
 import { canonicalDiff, changedFiles, resolveCommit } from "./git.js";
 import type { GitHubSource, NarrativeManifest } from "./types.js";
 
@@ -36,6 +38,9 @@ export function parseGitHubPullRequest(url: string): GitHubSource {
 
 export interface CaptureOptions {
   githubPrUrl?: string;
+  agentId?: AgentId;
+  databasePath?: string;
+  title?: string;
 }
 
 export function captureNarrative(
@@ -86,5 +91,14 @@ export function captureNarrative(
   };
   writeNew(join(output, "narrative.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
-  return { output, base, head, files: files.length, sourceBytes: diff.length };
+  const id = manifest.source.github ? String(manifest.source.github.number) : `${base}/${head}`;
+  beginReviewPreparation(id, {
+    title: options.title ?? (manifest.source.github ? `Pull request #${id}` : manifest.title),
+    sourceUrl: manifest.source.github?.pullRequestUrl,
+    baseRevision: base,
+    headRevision: head,
+    metadataDirectory: output,
+    agentId: options.agentId,
+  }, options.databasePath ?? process.env.HEPTAPOD_DB ?? join(repo, "node_modules/.cache/heptapod/reviews.sqlite"));
+  return { id, output, metadataDirectory: output, narrative: join(output, "narrative.json"), base, head, files: files.length, sourceBytes: diff.length };
 }

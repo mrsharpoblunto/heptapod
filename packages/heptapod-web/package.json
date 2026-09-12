@@ -20,7 +20,8 @@
     "next.config.ts",
     "postcss.config.mjs",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "repository": {
     "type": "git",
@@ -29,13 +30,18 @@
   },
   "homepage": "https://github.com/mrsharpoblunto/heptapod#readme",
   "bugs": "https://github.com/mrsharpoblunto/heptapod/issues",
-  "keywords": ["code-review", "diff", "github", "nextjs"],
+  "keywords": [
+    "code-review",
+    "diff",
+    "github",
+    "nextjs"
+  ],
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
     "dev": "node scripts/heptapod-web.mjs --dev",
-    "start": "next start",
+    "start": "node scripts/heptapod-web.mjs",
     "build": "next build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
@@ -47,14 +53,15 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@thestraylight/heptapod": "0.1.0",
     "@tailwindcss/postcss": "^4.2.1",
     "highlight.js": "^11.12.0",
     "lucide-react": "^1.45.0",
     "next": "16.3.5",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "tailwindcss": "^4.2.1"
+    "tailwindcss": "^4.2.1",
+    "@thestraylight/heptapod-core": "workspace:^",
+    "@thestraylight/heptapod-api": "workspace:^"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

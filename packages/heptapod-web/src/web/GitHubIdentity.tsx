@@ -1,89 +1,67 @@
 "use client";
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import type { GitHubPullRequestMetadata } from "@thestraylight/heptapod/types";
+import { createContext, use, useCallback, useContext, useEffect, useMemo, useReducer, useRef, type ReactNode } from "react";
+import type { GitHubPullRequestMetadata } from "@thestraylight/heptapod-core/types";
 
-interface MetadataCacheEntry {
-  status: "loading" | "loaded";
-  metadata: GitHubPullRequestMetadata | null;
-}
+export type GitHubMetadataPromises = Record<string, Promise<GitHubPullRequestMetadata | null>>;
+type MetadataEntry = { promise: Promise<GitHubPullRequestMetadata | null>; metadata?: GitHubPullRequestMetadata | null };
+type MetadataCache = Record<string, MetadataEntry>;
+type MetadataAction =
+  | { type: "request"; reviewId: string; promise: MetadataEntry["promise"] }
+  | { type: "resolve"; reviewId: string; promise: MetadataEntry["promise"]; metadata: GitHubPullRequestMetadata | null };
 
-type MetadataCache = Record<string, MetadataCacheEntry>;
-
-type MetadataCacheAction =
-  | { type: "request"; reviewId: string }
-  | { type: "resolve"; reviewId: string; metadata: GitHubPullRequestMetadata | null };
-
-interface GitHubMetadataContextValue {
-  cache: MetadataCache;
-  load: (reviewId: string) => void;
-}
-
-const GitHubMetadataContext = createContext<GitHubMetadataContextValue | null>(null);
-
-function metadataCacheReducer(state: MetadataCache, action: MetadataCacheAction): MetadataCache {
+export function metadataCacheReducer(state: MetadataCache, action: MetadataAction): MetadataCache {
+  const current = state[action.reviewId];
   if (action.type === "request") {
-    if (state[action.reviewId]) return state;
-    return { ...state, [action.reviewId]: { status: "loading", metadata: null } };
+    if (current?.promise === action.promise) return state;
+    return { ...state, [action.reviewId]: { ...current, promise: action.promise } };
   }
-  return {
-    ...state,
-    [action.reviewId]: { status: "loaded", metadata: action.metadata },
-  };
+  if (current?.promise !== action.promise) return state;
+  return { ...state, [action.reviewId]: { ...current, metadata: action.metadata } };
 }
 
-async function fetchGitHubMetadata(
-  reviewId: string,
-  signal?: AbortSignal,
-): Promise<GitHubPullRequestMetadata | null> {
-  const response = await fetch(`/api/reviews/${encodeURIComponent(reviewId)}/github-metadata`, {
-    cache: "no-store",
-    signal,
-  });
-  if (!response.ok) return null;
-  const result = await response.json() as { metadata?: GitHubPullRequestMetadata | null };
-  return result.metadata ?? null;
-}
+const GitHubMetadataContext = createContext<GitHubMetadataPromises>({});
+const GitHubMetadataStoreContext = createContext<{
+  cache: MetadataCache; dispatch: (action: MetadataAction) => void; load: (reviewId: string) => void;
+} | null>(null);
 
-export function GitHubMetadataProvider({ children }: { children: ReactNode }): ReactNode {
+// The root layout owns the cache so navigating between the list and a review retains it.
+export function GitHubMetadataStoreProvider({ children }: { children: ReactNode }): ReactNode {
   const [cache, dispatch] = useReducer(metadataCacheReducer, {});
-  const requests = useRef(new Map<string, AbortController>());
-
+  const requests = useRef(new Map<string, MetadataEntry["promise"]>());
   const load = useCallback((reviewId: string) => {
-    if (cache[reviewId] || requests.current.has(reviewId)) return;
-    const controller = new AbortController();
-    requests.current.set(reviewId, controller);
-    dispatch({ type: "request", reviewId });
-    void fetchGitHubMetadata(reviewId, controller.signal)
-      .then((metadata) => dispatch({ type: "resolve", reviewId, metadata }))
-      .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) {
-          dispatch({ type: "resolve", reviewId, metadata: null });
-        }
-      })
-      .finally(() => requests.current.delete(reviewId));
-  }, [cache]);
-
-  useEffect(() => {
-    const activeRequests = requests.current;
-    return () => {
-      for (const controller of activeRequests.values()) controller.abort();
-      activeRequests.clear();
-    };
+    if (requests.current.has(reviewId)) return;
+    const promise = fetch(`/api/reviews/${encodeURIComponent(reviewId)}/github-metadata`).then(async (response) => {
+      if (!response.ok) return null;
+      const result = await response.json() as { metadata: GitHubPullRequestMetadata | null };
+      return result.metadata;
+    }).catch(() => null);
+    requests.current.set(reviewId, promise);
+    dispatch({ type: "request", reviewId, promise });
+    void promise.then((metadata) => dispatch({ type: "resolve", reviewId, promise, metadata }));
   }, []);
+  const value = useMemo(() => ({ cache, dispatch, load }), [cache, load]);
+  return <GitHubMetadataStoreContext.Provider value={value}>{children}</GitHubMetadataStoreContext.Provider>;
+}
 
-  const value = useMemo(() => ({ cache, load }), [cache, load]);
-  return <GitHubMetadataContext.Provider value={value}>{children}</GitHubMetadataContext.Provider>;
+// Page renders start these promises on the server. Their results hydrate the persistent store.
+export function GitHubMetadataProvider({ children, promises }: { children: ReactNode; promises: GitHubMetadataPromises }): ReactNode {
+  const store = useContext(GitHubMetadataStoreContext);
+  const dispatch = store?.dispatch;
+  useEffect(() => {
+    if (!dispatch) return;
+    let active = true;
+    for (const [reviewId, promise] of Object.entries(promises)) {
+      dispatch({ type: "request", reviewId, promise });
+      void promise.then((metadata) => {
+        if (active) dispatch({ type: "resolve", reviewId, promise, metadata });
+      }, () => {
+        if (active) dispatch({ type: "resolve", reviewId, promise, metadata: null });
+      });
+    }
+    return () => { active = false; };
+  }, [dispatch, promises]);
+  return <GitHubMetadataContext.Provider value={promises}>{children}</GitHubMetadataContext.Provider>;
 }
 
 export function GitHubIcon({ size = 16 }: { size?: number }): ReactNode {
@@ -92,34 +70,27 @@ export function GitHubIcon({ size = 16 }: { size?: number }): ReactNode {
   </svg>;
 }
 
+// Non-suspending consumers can wait for the same server-fed store without blocking the viewer.
+export function useCachedGitHubPullRequestMetadata(reviewId?: string) {
+  const store = useContext(GitHubMetadataStoreContext);
+  return reviewId ? store?.cache[reviewId]?.metadata : undefined;
+}
+
 export function useGitHubPullRequestMetadata(reviewId?: string, enabled = true) {
-  const context = useContext(GitHubMetadataContext);
-  const [standaloneMetadata, setStandaloneMetadata] = useState<GitHubPullRequestMetadata | null | undefined>(
-    enabled && reviewId ? undefined : null,
-  );
-
+  const promises = useContext(GitHubMetadataContext);
+  const store = useContext(GitHubMetadataStoreContext);
+  const entry = reviewId ? store?.cache[reviewId] : undefined;
+  const serverPromise = reviewId ? promises[reviewId] : undefined;
+  const load = store?.load;
   useEffect(() => {
-    if (!enabled || !reviewId) {
-      setStandaloneMetadata(null);
-      return;
-    }
-    if (context) {
-      context.load(reviewId);
-      return;
-    }
-    const controller = new AbortController();
-    void fetchGitHubMetadata(reviewId, controller.signal)
-      .then(setStandaloneMetadata)
-      .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) setStandaloneMetadata(null);
-      });
-    return () => controller.abort();
-  }, [context, enabled, reviewId]);
-
+    // Imports discovered by JSON polling have no initial RSC metadata promise.
+    if (enabled && reviewId && !entry && !serverPromise) load?.(reviewId);
+  }, [enabled, reviewId, entry, serverPromise, load]);
   if (!enabled || !reviewId) return null;
-  if (!context) return standaloneMetadata;
-  const entry = context.cache[reviewId];
-  return entry?.status === "loaded" ? entry.metadata : undefined;
+  const cached = entry?.metadata;
+  if (cached !== undefined) return cached;
+  const promise = serverPromise ?? entry?.promise;
+  return promise ? use(promise) : undefined;
 }
 
 export function PullRequestAvatar({
@@ -129,9 +100,10 @@ export function PullRequestAvatar({
   metadata: GitHubPullRequestMetadata | null | undefined;
   compact?: boolean;
 }): ReactNode {
-  if (metadata === undefined) return <span className={`${compact ? "avatar-shimmer-compact" : "avatar-shimmer"} shimmer`} aria-label="Loading pull request author" />;
+  const className = `author-avatar${compact ? " author-avatar-compact" : ""}`;
+  if (metadata === undefined) return <span className={`${className} avatar-shimmer shimmer`} aria-label="Loading pull request author" />;
   if (metadata === null) return null;
-  return <a className={`author-avatar${compact ? " author-avatar-compact" : ""}`} href={metadata.profileUrl} target="_blank" rel="noreferrer" title={`View @${metadata.login} on GitHub`}>
+  return <a className={className} href={metadata.profileUrl} target="_blank" rel="noreferrer" title={`@${metadata.login}`}>
     <img src={metadata.avatarUrl} alt={`@${metadata.login}`} />
   </a>;
 }
@@ -142,13 +114,11 @@ export function PullRequestBadges({
   metadata: GitHubPullRequestMetadata | null | undefined;
 }): ReactNode {
   if (metadata === undefined) return <span className="identity-copy" aria-label="Loading pull request status">
-    <span className="identity-badge-shimmer shimmer" />
     <span className="state-badge-shimmer shimmer" />
   </span>;
   if (metadata === null) return null;
   const label = metadata.state[0].toUpperCase() + metadata.state.slice(1);
   return <span className="identity-copy">
-    <a className="author-badge" href={metadata.profileUrl} target="_blank" rel="noreferrer">@{metadata.login}</a>
     <span className={`pr-state pr-state-${metadata.state}`}>{label}</span>
   </span>;
 }

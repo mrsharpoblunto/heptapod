@@ -1,15 +1,50 @@
 {
   "test": {
-    "fixtures": { "format": "javascript" },
+    "fixtures": {
+      "format": "javascript"
+    },
     "prerequisites": [
-      { "command": ["pnpm", "install", "--frozen-lockfile"] }
+      {
+        "command": [
+          "pnpm",
+          "install",
+          "--frozen-lockfile"
+        ]
+      }
     ],
     "build": [
-      { "command": ["pnpm", "--dir", "packages/heptapod", "build"] }
+      {
+        "command": [
+          "pnpm",
+          "--filter",
+          "@thestraylight/heptapod-core",
+          "build"
+        ]
+      },
+      {
+        "command": [
+          "pnpm",
+          "--filter",
+          "@thestraylight/heptapod-api",
+          "build"
+        ]
+      },
+      {
+        "command": [
+          "pnpm",
+          "--filter",
+          "@thestraylight/heptapod",
+          "build"
+        ]
+      }
     ],
     "runner": {
       "format": "vitest",
-      "command": ["pnpm", "test", "{files}"]
+      "command": [
+        "pnpm",
+        "test",
+        "{files}"
+      ]
     }
   }
 }

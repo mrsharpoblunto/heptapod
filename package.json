@@ -10,13 +10,13 @@
   },
   "scripts": {
     "dev": "pnpm run dev:web",
-    "dev:cli": "pnpm --dir packages/heptapod dev",
+    "dev:cli": "pnpm --filter @thestraylight/heptapod-core build && pnpm --dir packages/heptapod dev",
     "dev:web": "pnpm --dir packages/heptapod-web dev",
     "build": "pnpm --recursive build",
     "typecheck": "pnpm --recursive typecheck",
     "lint": "pnpm --recursive lint",
     "test": "pnpm --recursive test",
     "check": "pnpm --recursive check",
-    "pack:check": "pnpm --filter @thestraylight/heptapod pack --dry-run && pnpm --filter @thestraylight/heptapod-web pack --dry-run && pnpm --filter @thestraylight/heptapod-skill pack --dry-run"
+    "pack:check": "pnpm --filter @thestraylight/heptapod-core pack --dry-run && pnpm --filter @thestraylight/heptapod-api pack --dry-run && pnpm --filter @thestraylight/heptapod pack --dry-run && pnpm --filter @thestraylight/heptapod-web pack --dry-run && pnpm --filter @thestraylight/heptapod-skill pack --dry-run"
   }
 }

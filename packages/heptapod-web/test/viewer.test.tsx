@@ -2,13 +2,26 @@ import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { test, vi } from "vitest";
-import type { RenderModel, ReviewComment } from "@thestraylight/heptapod/types";
+import type { RenderModel, ReviewComment } from "@thestraylight/heptapod-core/types";
+import { ReviewProgress } from "../src/web/ReviewProgress";
+import { ReviewCard, canOpenReview, type ReviewSummary } from "../src/web/ReviewCard";
 import { ReviewIndex } from "../src/web/ReviewIndex.js";
 import { PendingReview } from "../src/web/PendingReview.js";
 import RootLayout from "../app/layout";
 import { buildDiffSegments, DiffView, newestFixtureRuns, parseDiff, resolveStepFile, reviewRailItems, ReviewViewer } from "../src/web/ReviewViewer.js";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => {} }), usePathname: () => "/reviews/42" }));
+vi.mock("../src/web/setup-checks", () => ({ startSetupChecks: () => ({
+  repository: Promise.resolve({ connected: false, name: "Not connected" }),
+  github: Promise.resolve({ installed: false, authenticated: false }),
+  skills: Promise.resolve(false), agents: Promise.resolve({ agents: [] }),
+}) }));
+
+const { cachedMetadata } = vi.hoisted(() => ({ cachedMetadata: vi.fn(() => ({ state: "open" })) }));
+vi.mock("../src/web/GitHubIdentity", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/web/GitHubIdentity")>(),
+  useCachedGitHubPullRequestMetadata: cachedMetadata,
+}));
 
 const base = "1111111111111111111111111111111111111111";
 const head = "2222222222222222222222222222222222222222";
@@ -118,18 +131,40 @@ test("renders the packaged viewer around shared core model types", () => {
   assert.match(markup, /Prepare GitHub draft/);
 });
 
-test("does not mount the homepage canvas when rendering completed reviews directly", () => {
+test("keeps one root background canvas when rendering completed reviews directly", () => {
   const ready = createElement(ReviewViewer, { data, reviewId: "42", updatedAt: "2026-09-11T12:00:00.000Z" });
   const markup = renderToStaticMarkup(createElement(RootLayout, { children: ready }));
-  assert.doesNotMatch(markup, /<canvas|heptapod-backdrop/);
+  assert.equal((markup.match(/<canvas/g) ?? []).length, 1);
   assert.match(markup, /<main/);
 });
 
 test("mounts the homepage canvas while waiting for a review", () => {
-  const pending = createElement(PendingReview, { id: "42", title: data.title, status: "pending", progress: "Preparing review", error: null });
+  const review: ReviewSummary = { id: "42", title: data.title, summary: "", sourceUrl: null, baseRevision: base, headRevision: head, updatedAt: "2026-09-12", additions: null, deletions: null, status: "pending", progress: "Preparing review", error: null };
+  const pending = createElement(PendingReview, { review });
   const markup = renderToStaticMarkup(createElement(RootLayout, { children: pending }));
-  assert.match(markup, /<canvas[^>]*heptapod-backdrop/);
+  assert.equal((markup.match(/<canvas/g) ?? []).length, 1);
   assert.match(markup, /Preparing review/);
+  const card = renderToStaticMarkup(createElement(ReviewCard, { review, deleting: false, onDelete: () => {} }));
+  assert.ok(markup.includes(card));
+  assert.doesNotMatch(markup, /pending-card|pending-spinner/);
+});
+
+test("pending cards allow deletion but only reviews with a payload can open while updating", () => {
+  const review: ReviewSummary = { id: "42", title: data.title, summary: "", sourceUrl: null, baseRevision: base, headRevision: head, updatedAt: "2026-09-12", additions: null, deletions: null, status: "preparing", progress: null, error: null };
+  for (const status of ["preparing", "pending"] as const) {
+    const pending = { ...review, status };
+    assert.equal(canOpenReview(pending), false);
+    const markup = renderToStaticMarkup(createElement(ReviewCard, { review: pending, deleting: false, onDelete: () => {}, onOpen: () => {} }));
+    assert.match(markup, /aria-label="Delete review 42"/);
+    assert.doesNotMatch(markup, /disabled|review-list-item-clickable/);
+    assert.match(markup, /review-progress-label">Importing</);
+    const updating = renderToStaticMarkup(createElement(ReviewCard, { review: { ...pending, updating: true }, deleting: false, onDelete: () => {}, onOpen: () => {} }));
+    assert.match(updating, /review-progress-label">Updating</);
+    assert.doesNotMatch(updating, /class="review-updating"/);
+    assert.equal((updating.match(/progress-spinner/g) ?? []).length, 1);
+    assert.equal(canOpenReview({ ...pending, updating: true }), true);
+  }
+  assert.equal(canOpenReview({ ...review, status: "ready" }), true);
 });
 
 test("hides review and annotation controls for revision comparisons", () => {
@@ -162,13 +197,31 @@ test("builds expandable context gaps around minimal diff hunks", () => {
   assert.equal(gaps[1].gap.lines[1].content, " five");
 });
 
-test("an updating review keeps its content and shows status before header metadata", () => {
+test("refactor comments target explanation, source, and callsites without wrapping before/after examples", () => {
+  const model: RenderModel = { ...data, steps: [{ ...data.steps[0], kind: "refactor", body: "", testRun: undefined, interfaces: [{
+    name: "Portal bitmap scale", description: "Explain the backing resolution.", file: "src/math.js",
+    before: "Before with [math](heptapod-file:src%2Fmath.js).", after: "After the refactor.",
+    callsites: [{ file: "src/app.js", label: "Caller" }],
+  }] }] };
+  const markup = renderToStaticMarkup(createElement(ReviewViewer, { data: model, reviewId: "42", updatedAt: "2026-09-12" }));
+  const beforeAfter = markup.slice(markup.indexOf('class="before-after"'), markup.indexOf('class="refactor-file-group"'));
+  assert.doesNotMatch(beforeAfter, /comment-anchor|Add review comment/);
+  assert.match(beforeAfter, /file-link-inline/);
+  const refactor = markup.slice(markup.indexOf('class="refactor-sections"'), markup.indexOf('class="step-pager"'));
+  assert.equal(refactor.match(/Add review comment/g)?.length, 3);
+  assert.match(refactor, /class="refactor-section"><div class="interface-change"><h3>/);
+});
+
+test("an updating review keeps its content and reuses the card progress bar below its subtitle", () => {
   const markup = renderToStaticMarkup(createElement(ReviewViewer, {
-    data, reviewId: "42", updatedAt: "2026-09-11T12:00:00.000Z", updating: true,
+    data, reviewId: "42", updatedAt: "2026-09-11T12:00:00.000Z", updating: true, progress: "Running tests after step 2/4",
   }));
-  assert.match(markup, /class="review-updating" role="status"/);
-  assert.match(markup, /Updating…/);
-  assert.ok(markup.indexOf("review-updating") < markup.indexOf('class="github-link"'));
+  const progress = renderToStaticMarkup(createElement(ReviewProgress, { status: "pending", updating: true, progress: "Running tests after step 2/4" }));
+  assert.ok(markup.includes(progress));
+  assert.doesNotMatch(markup, /class="review-updating"/);
+  assert.ok(markup.indexOf("review-subheader") < markup.indexOf("review-state-pending"));
+  assert.match(markup, /review-progress-label">Updating</);
+  assert.ok(markup.indexOf("review-state-pending") < markup.indexOf('class="github-link"'));
   assert.match(markup, /Bound arithmetic results/);
   assert.match(markup, /Start with/);
 });
@@ -219,8 +272,8 @@ test("does not open future tests or revive deleted or unavailable test content",
   assert.equal(resolveStepFile([added, { ...unchanged, fileDiffs: [{ path, patch: "+unknown" }] }, unchanged], 2, path), undefined);
 });
 
-test("renders ingestion instructions and linked pull-request metadata on the index", () => {
-  const markup = renderToStaticMarkup(createElement(ReviewIndex, { repository: { name: "example/math", githubUrl: "https://github.com/example/math" }, reviews: [{
+test("renders imported reviews and linked pull-request metadata on the index", () => {
+  const markup = renderToStaticMarkup(createElement(ReviewIndex, { reviews: [{
     id: "42",
     title: "Introduce bounded arithmetic",
     summary: "Specify clamping, implement it, and update the app.",
@@ -235,13 +288,9 @@ test("renders ingestion instructions and linked pull-request metadata on the ind
     deletions: 0,
   }] }));
   assert.match(markup, /<h1[^>]*>HEPTAPOD<\/h1>/);
-  assert.match(markup, /Connected repository: <a href="https:\/\/github.com\/example\/math"/);
-  assert.doesNotMatch(markup, /Run Heptapod from the repository/);
-  assert.match(markup, /Use the installed agent skill/);
-  assert.match(markup, /<canvas[^>]*heptapod-backdrop/);
-  assert.match(markup, /heptapod capture --pr/);
-  assert.match(markup, /gh auth login/);
-  assert.match(markup, /gh auth status/);
+  assert.match(markup, /Imported reviews/);
+  assert.doesNotMatch(markup, /heptapod capture --pr/);
+  assert.doesNotMatch(markup, /<canvas/);
   assert.match(markup, /progress-spinner/);
   assert.match(markup, /https:\/\/github.com\/example\/math\/pull\/42/);
   assert.match(markup, new RegExp(`https://github.com/example/math/commit/${base}`));
@@ -323,4 +372,35 @@ test("counts review rail files and tests once and opens their latest changed sna
   assert.equal(items.changedTests[0].testCase.newLine, 5);
   assert.equal(items.changedFiles.length, 1);
   assert.equal(items.changedFiles[0].stepId, "last");
+});
+
+
+test("closed and merged pull requests omit comment controls and the GitHub summary", () => {
+  for (const state of ["closed", "merged"]) {
+    cachedMetadata.mockReturnValue({ state });
+    const markup = renderToStaticMarkup(createElement(ReviewViewer, { data, reviewId: "42", updatedAt: "2026-09-12" }));
+    assert.doesNotMatch(markup, /Prepare GitHub draft|review-step-button|draft-review/);
+    assert.doesNotMatch(markup, /Add review comment|Edit review comment|comment-anchor|comment-line-number/);
+    assert.match(markup, /1 \/ 1/);
+  }
+  cachedMetadata.mockReturnValue({ state: "open" });
+  const open = renderToStaticMarkup(createElement(ReviewViewer, { data, reviewId: "42", updatedAt: "2026-09-12" }));
+  assert.match(open, /Prepare GitHub draft/);
+  assert.match(open, /Add review comment/);
+  assert.match(open, /1 \/ 2/);
+});
+
+
+test("imported PR cards split delete and refresh actions, including legacy imports without a recorded agent", () => {
+  const review: ReviewSummary = { id: "42", title: data.title, summary: "", sourceUrl: data.source.github!.pullRequestUrl, baseRevision: base, headRevision: head, updatedAt: "2026-09-12", additions: 1, deletions: 0, status: "ready", progress: null, error: null };
+  const props = { deleting: false, onDelete: () => {} };
+  const legacy = renderToStaticMarkup(createElement(ReviewCard, { ...props, review }));
+  assert.match(legacy, /review-card-actions-split/);
+  assert.match(legacy, /aria-label="Refresh review 42"/);
+  assert.match(legacy, /Refresh with the default agent/);
+  assert.doesNotMatch(legacy, /disabled/);
+  const recorded = renderToStaticMarkup(createElement(ReviewCard, { ...props, review: { ...review, agentId: "claude" } }));
+  assert.match(recorded, /Refresh with Claude Code/);
+  const pending = renderToStaticMarkup(createElement(ReviewCard, { ...props, review: { ...review, status: "preparing" } }));
+  assert.doesNotMatch(pending, /Refresh review 42/);
 });
