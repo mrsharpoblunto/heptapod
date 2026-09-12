@@ -34,6 +34,10 @@
       "types": "./dist/tool/cache.d.ts",
       "import": "./dist/tool/cache.js"
     },
+    "./review-draft": {
+      "types": "./dist/tool/review-draft.d.ts",
+      "import": "./dist/tool/review-draft.js"
+    },
     "./types": {
       "types": "./dist/tool/types.d.ts",
       "import": "./dist/tool/types.js"

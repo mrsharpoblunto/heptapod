@@ -210,3 +210,47 @@ export interface RenderModel {
   testExecution?: TestExecutionMetadata;
   steps: RenderStep[];
 }
+
+export type ReviewCommentTarget =
+  | { kind: "section"; stepId: string; anchor: string; section: string }
+  | { kind: "quote"; stepId: string; anchor: string; section: string; quote: string; start: number; end: number }
+  | { kind: "file"; stepId: string; anchor: string; path: string }
+  | { kind: "line"; stepId: string; anchor: string; path: string; side: "LEFT" | "RIGHT"; startLine: number; endLine: number };
+
+export interface ReviewComment {
+  id: string;
+  body: string;
+  target: ReviewCommentTarget;
+}
+
+export interface ReviewDraft {
+  id: string;
+  reviewId: string;
+  head: string;
+  version: number;
+  summary: string;
+  summaryIsCombined?: boolean;
+  comments: ReviewComment[];
+  githubReviewId: string | null;
+  githubUrl: string | null;
+  publishedAt: string | null;
+  publishing: boolean;
+}
+
+export interface ReviewThreadPreview {
+  commentId: string;
+  body: string;
+  path: string;
+  subjectType: "FILE" | "LINE";
+  side?: "LEFT" | "RIGHT";
+  line?: number;
+  startLine?: number;
+  snippet: string;
+  error?: string;
+}
+
+export interface ReviewDraftPreview {
+  body: string;
+  threads: ReviewThreadPreview[];
+  errors: string[];
+}

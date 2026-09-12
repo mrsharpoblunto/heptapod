@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { test, vi } from "vitest";
-import type { RenderModel } from "@thestraylight/heptapod/types";
+import type { RenderModel, ReviewComment } from "@thestraylight/heptapod/types";
 import { ReviewIndex } from "../src/web/ReviewIndex.js";
-import { buildDiffSegments, DiffView, newestFixtureRuns, parseDiff, ReviewViewer } from "../src/web/ReviewViewer.js";
+import { PendingReview } from "../src/web/PendingReview.js";
+import RootLayout from "../app/layout";
+import { buildDiffSegments, DiffView, newestFixtureRuns, parseDiff, resolveStepFile, reviewRailItems, ReviewViewer } from "../src/web/ReviewViewer.js";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => {} }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => {} }), usePathname: () => "/reviews/42" }));
 
 const base = "1111111111111111111111111111111111111111";
 const head = "2222222222222222222222222222222222222222";
@@ -111,6 +113,32 @@ test("renders the packaged viewer around shared core model types", () => {
   assert.doesNotMatch(markup, /Full suite · pnpm test/);
   assert.doesNotMatch(markup, /Changed test fixtures/);
   assert.doesNotMatch(markup, /Full test suite/);
+  assert.match(markup, /Add review comment/);
+  assert.doesNotMatch(markup, /Comment on this step/);
+  assert.match(markup, /Prepare GitHub draft/);
+});
+
+test("does not mount the homepage canvas when rendering completed reviews directly", () => {
+  const ready = createElement(ReviewViewer, { data, reviewId: "42", updatedAt: "2026-09-11T12:00:00.000Z" });
+  const markup = renderToStaticMarkup(createElement(RootLayout, { children: ready }));
+  assert.doesNotMatch(markup, /<canvas|heptapod-backdrop/);
+  assert.match(markup, /<main/);
+});
+
+test("mounts the homepage canvas while waiting for a review", () => {
+  const pending = createElement(PendingReview, { id: "42", title: data.title, status: "pending", progress: "Preparing review", error: null });
+  const markup = renderToStaticMarkup(createElement(RootLayout, { children: pending }));
+  assert.match(markup, /<canvas[^>]*heptapod-backdrop/);
+  assert.match(markup, /Preparing review/);
+});
+
+test("hides review and annotation controls for revision comparisons", () => {
+  const markup = renderToStaticMarkup(createElement(ReviewViewer, {
+    data: { ...data, source: { ...data.source, github: undefined } },
+    reviewId: `${base}/${head}`,
+    updatedAt: "2026-09-11T12:00:00.000Z",
+  }));
+  assert.doesNotMatch(markup, /Comment on this step|Prepare GitHub draft|comment-anchor|Publish draft comments|Comment on updated line/);
 });
 
 test("builds expandable context gaps around minimal diff hunks", () => {
@@ -145,6 +173,52 @@ test("an updating review keeps its content and shows status before header metada
   assert.match(markup, /Start with/);
 });
 
+test("opens a previously changed test as its latest full content at the selected step", () => {
+  const path = "src/math.test.js";
+  const original = "it('clamps values', () => expect(clamp(12)).toBe(10));\n";
+  const latest = "describe('bounds', () => {\n  it('clamps values', () => expect(clamp(15)).toBe(10));\n});\n";
+  const unchanged = { ...data.steps[0], fileDiffs: [], referenceFiles: [] };
+  const steps = [
+    { ...unchanged, fileDiffs: [{ path, patch: "+original test", beforeContent: null, afterContent: original }] },
+    { ...unchanged, fileDiffs: [{ path, patch: "-original test\n+updated test", beforeContent: original, afterContent: latest }] },
+    unchanged,
+    { ...unchanged, fileDiffs: [{ path, patch: "+future test", beforeContent: latest, afterContent: "future content\n" }] },
+  ];
+  const file = resolveStepFile(steps, 2, steps[2].testRun!.fixtureRuns[0].file);
+  assert.ok(file);
+  assert.equal(file.beforeContent, latest);
+  assert.equal(file.afterContent, latest);
+  assert.equal(file.patch, "");
+  const lines = buildDiffSegments(parseDiff(file.patch), file.beforeContent, file.afterContent)
+    .flatMap((segment) => segment.kind === "lines" ? segment.lines : []);
+  assert.equal(lines.map((line) => line.content.slice(1)).join("\n") + "\n", latest);
+  assert.ok(lines.every((line) => line.type === "context"));
+  assert.deepEqual(lines.map((line) => [line.old, line.next]), [[1, 1], [2, 2], [3, 3]]);
+});
+
+test("preserves current-step diffs and reference snapshots when opening a test", () => {
+  const file = { path: "src/math.test.js", patch: "+changed test", beforeContent: "old\n", afterContent: "new\n" };
+  const changed = { ...data.steps[0], fileDiffs: [file], referenceFiles: [] };
+  const reference = { ...file, patch: "", beforeContent: "reference\n", afterContent: "reference\n" };
+  const referenced = { ...changed, fileDiffs: [], referenceFiles: [reference] };
+  assert.equal(resolveStepFile([changed, referenced], 0, file.path), file);
+  assert.equal(resolveStepFile([changed, referenced], 1, file.path), reference);
+  assert.equal(resolveStepFile([changed], 0, null), undefined);
+});
+
+test("does not open future tests or revive deleted or unavailable test content", () => {
+  const path = "src/math.test.js";
+  const unchanged = { ...data.steps[0], fileDiffs: [], referenceFiles: [] };
+  const added = { ...unchanged, fileDiffs: [{ path, patch: "+test", beforeContent: null, afterContent: "test\n" }] };
+  const removed = { ...unchanged, fileDiffs: [{ path, patch: "-test", beforeContent: "test\n", afterContent: null }] };
+  const steps = [unchanged, added, removed, unchanged, added];
+  assert.equal(resolveStepFile(steps, 0, path), undefined);
+  assert.equal(resolveStepFile(steps, 2, path), removed.fileDiffs[0]);
+  assert.equal(resolveStepFile(steps, 3, path), undefined);
+  assert.equal(resolveStepFile(steps, 4, path), added.fileDiffs[0]);
+  assert.equal(resolveStepFile([added, { ...unchanged, fileDiffs: [{ path, patch: "+unknown" }] }, unchanged], 2, path), undefined);
+});
+
 test("renders ingestion instructions and linked pull-request metadata on the index", () => {
   const markup = renderToStaticMarkup(createElement(ReviewIndex, { repository: { name: "example/math", githubUrl: "https://github.com/example/math" }, reviews: [{
     id: "42",
@@ -164,7 +238,10 @@ test("renders ingestion instructions and linked pull-request metadata on the ind
   assert.match(markup, /Connected repository: <a href="https:\/\/github.com\/example\/math"/);
   assert.doesNotMatch(markup, /Run Heptapod from the repository/);
   assert.match(markup, /Use the installed agent skill/);
+  assert.match(markup, /<canvas[^>]*heptapod-backdrop/);
   assert.match(markup, /heptapod capture --pr/);
+  assert.match(markup, /gh auth login/);
+  assert.match(markup, /gh auth status/);
   assert.match(markup, /progress-spinner/);
   assert.match(markup, /https:\/\/github.com\/example\/math\/pull\/42/);
   assert.match(markup, new RegExp(`https://github.com/example/math/commit/${base}`));
@@ -226,4 +303,24 @@ test("newly introduced fixtures precede older coverage without changing their re
   assert.deepEqual(newestFixtureRuns(steps, 1).map((run) => run.file), ["new-a.ts", "new-b.ts", "old-a.ts", "old-b.ts"]);
   assert.deepEqual(newestFixtureRuns(steps, 2).map((run) => run.file), ["latest.ts", "new-a.ts", "new-b.ts", "old-a.ts", "old-b.ts"]);
   assert.deepEqual(steps[2].testRun!.fixtureRuns.map((run) => run.file), ["old-a.ts", "old-b.ts", "new-a.ts", "new-b.ts", "latest.ts"]);
+});
+
+
+test("counts review rail files and tests once and opens their latest changed snapshots", () => {
+  const testCase = { name: "clamps values", change: "added" as const, newLine: 2, newEndLine: 4 };
+  const first = { ...data.steps[0], id: "first", fileDiffs: [{ path: "src/math.js", patch: "" }], testAreas: [{ name: "Bounds", description: "", files: [{ path: "src/math.test.js", cases: [testCase] }] }] };
+  const last = { ...first, id: "last", testAreas: [{ ...first.testAreas[0], files: [{ path: "src/math.test.js", cases: [{ ...testCase, newLine: 5, newEndLine: 7 }] }] }] };
+  const comments: ReviewComment[] = [
+    { id: "file", body: "File question", target: { kind: "file", stepId: "first", anchor: "file", path: "src/math.js" } },
+    { id: "line", body: "Line question", target: { kind: "line", stepId: "last", anchor: "code", path: "src/math.js", side: "RIGHT", startLine: 1, endLine: 1 } },
+    { id: "empty", body: "", target: { kind: "file", stepId: "last", anchor: "empty", path: "src/empty.js" } },
+    { id: "summary", body: "Overall question", target: { kind: "section", stepId: "last", anchor: "body", section: "Summary" } },
+  ];
+  const items = reviewRailItems({ ...data, steps: [first, last] }, comments);
+  assert.deepEqual(items.commentedFiles, [{ path: "src/math.js", stepId: "last" }]);
+  assert.equal(items.changedTests.length, 1);
+  assert.equal(items.changedTests[0].stepId, "last");
+  assert.equal(items.changedTests[0].testCase.newLine, 5);
+  assert.equal(items.changedFiles.length, 1);
+  assert.equal(items.changedFiles[0].stepId, "last");
 });

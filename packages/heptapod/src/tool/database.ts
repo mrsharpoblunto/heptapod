@@ -1,8 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 import { resolveDatabasePath, validateReviewId } from "./cache.js";
-import type { RenderModel } from "./types.js";
+import { validateReviewComments } from "./review-draft.js";
+import type { RenderModel, ReviewComment, ReviewDraft } from "./types.js";
 
 export { resolveDatabasePath, validateReviewId } from "./cache.js";
 
@@ -70,7 +72,105 @@ function openDatabase(databasePath?: string): DatabaseSync {
   if (!columns.has("status")) database.exec("ALTER TABLE reviews ADD COLUMN status TEXT NOT NULL DEFAULT 'ready';");
   if (!columns.has("progress")) database.exec("ALTER TABLE reviews ADD COLUMN progress TEXT;");
   if (!columns.has("error")) database.exec("ALTER TABLE reviews ADD COLUMN error TEXT;");
+  database.exec(`CREATE TABLE IF NOT EXISTS review_drafts (
+    review_id TEXT PRIMARY KEY REFERENCES reviews(id) ON DELETE CASCADE,
+    id TEXT NOT NULL,
+    head TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0,
+    summary TEXT NOT NULL DEFAULT '',
+    summary_is_combined INTEGER NOT NULL DEFAULT 0,
+    comments_json TEXT NOT NULL DEFAULT '[]',
+    github_review_id TEXT,
+    github_url TEXT,
+    published_at TEXT,
+    publishing_until INTEGER NOT NULL DEFAULT 0
+  ) STRICT;`);
+  const draftColumns = new Set((database.prepare("PRAGMA table_info(review_drafts)").all() as Array<{ name: string }>).map((column) => column.name));
+  if (!draftColumns.has("summary_is_combined")) database.exec("ALTER TABLE review_drafts ADD COLUMN summary_is_combined INTEGER NOT NULL DEFAULT 0");
   return database;
+}
+
+interface DraftRow {
+  review_id: string;
+  id: string;
+  head: string;
+  version: number;
+  summary: string;
+  summary_is_combined: number;
+  comments_json: string;
+  github_review_id: string | null;
+  github_url: string | null;
+  published_at: string | null;
+  publishing_until: number;
+}
+
+function draftFromDatabase(database: DatabaseSync, reviewId: string): ReviewDraft {
+  const row = database.prepare("SELECT * FROM review_drafts WHERE review_id = ?").get(reviewId) as DraftRow | undefined;
+  if (!row) throw new Error("The review draft was not found.");
+  return { id: row.id, reviewId: row.review_id, head: row.head, version: row.version, summary: row.summary,
+    summaryIsCombined: Boolean(row.summary_is_combined), comments: JSON.parse(row.comments_json), githubReviewId: row.github_review_id, githubUrl: row.github_url,
+    publishedAt: row.published_at, publishing: row.publishing_until > Date.now() };
+}
+
+function requireGitHubReview(database: DatabaseSync, id: string): ReadyStoredReview {
+  const review = getReviewFromDatabase(database, id);
+  if (!review?.payload?.source.github) throw new Error("Review drafts are only available for GitHub pull requests.");
+  if (review.status !== "ready") throw new Error("Wait for the review to finish loading.");
+  return review as ReadyStoredReview;
+}
+
+export function getReviewDraft(reviewId: string, databasePath?: string): ReviewDraft {
+  validateReviewId(reviewId);
+  const database = openDatabase(databasePath);
+  try {
+    const review = requireGitHubReview(database, reviewId);
+    database.prepare("INSERT OR IGNORE INTO review_drafts (review_id, id, head) VALUES (?, ?, ?)").run(reviewId, randomUUID(), review.headRevision);
+    return draftFromDatabase(database, reviewId);
+  } finally { database.close(); }
+}
+
+export function saveReviewDraft(reviewId: string, version: number, summary: string, comments: ReviewComment[], databasePath?: string, summaryIsCombined = false): ReviewDraft {
+  const database = openDatabase(databasePath);
+  try {
+    const review = requireGitHubReview(database, reviewId);
+    validateReviewComments(review.payload, summary, comments);
+    const result = database.prepare(`UPDATE review_drafts SET summary = ?, summary_is_combined = ?, comments_json = ?, version = version + 1
+      WHERE review_id = ? AND version = ? AND head = ? AND publishing_until < ? AND github_review_id IS NULL AND published_at IS NULL`)
+      .run(summary, summaryIsCombined ? 1 : 0, JSON.stringify(comments), reviewId, version, review.headRevision, Date.now());
+    if (!result.changes) throw new Error("This draft changed in another tab, is being published, or belongs to an older revision. Reload before editing.");
+    return draftFromDatabase(database, reviewId);
+  } finally { database.close(); }
+}
+
+export function claimReviewDraftPublication(reviewId: string, version: number, databasePath?: string): ReviewDraft {
+  const database = openDatabase(databasePath);
+  try {
+    const review = requireGitHubReview(database, reviewId);
+    const draft = draftFromDatabase(database, reviewId);
+    if (draft.publishedAt) return draft;
+    const result = database.prepare(`UPDATE review_drafts SET publishing_until = ?
+      WHERE review_id = ? AND version = ? AND head = ? AND publishing_until < ?`)
+      .run(Date.now() + 10 * 60_000, reviewId, version, review.headRevision, Date.now());
+    if (!result.changes) throw new Error("This draft changed or is already being published. Reload and try again.");
+    return draftFromDatabase(database, reviewId);
+  } finally { database.close(); }
+}
+
+export function recordGitHubDraft(reviewId: string, githubReviewId: string, githubUrl: string, databasePath?: string): void {
+  const database = openDatabase(databasePath);
+  try {
+    database.prepare("UPDATE review_drafts SET github_review_id = ?, github_url = ?, publishing_until = ? WHERE review_id = ?")
+      .run(githubReviewId, githubUrl, Date.now() + 10 * 60_000, reviewId);
+  } finally { database.close(); }
+}
+
+export function finishReviewDraftPublication(reviewId: string, success: boolean, databasePath?: string): ReviewDraft {
+  const database = openDatabase(databasePath);
+  try {
+    database.prepare("UPDATE review_drafts SET publishing_until = 0, published_at = COALESCE(?, published_at) WHERE review_id = ?")
+      .run(success ? new Date().toISOString() : null, reviewId);
+    return draftFromDatabase(database, reviewId);
+  } finally { database.close(); }
 }
 
 export function beginReviewIngestion(

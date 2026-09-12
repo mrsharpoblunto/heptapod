@@ -89,6 +89,18 @@ Fixture adapters in `src/tool/test-fixtures` own file recognition (`supports` an
 
 When these workspace packages are locally linked, `pnpm exec heptapod` detects the source checkout and executes the TypeScript entrypoint through `tsx`, so CLI edits do not require a build. Use `pnpm exec heptapod-web-dev --port 3000` to run the linked web source with Next.js hot reload. The ordinary `heptapod-web` binary continues to serve the production build.
 
+## GitHub review drafts
+
+Install [GitHub CLI](https://cli.github.com/) on the machine running Heptapod, then run `gh auth login` and `gh auth status`. The active GitHub account must have access to review the PR. Authentication is shared across repositories.
+
+For GitHub reviews, hover over a Markdown section, file link, test declaration, or refactor item to reveal its comment button in the left gutter. Saved comments keep a filled button visible. Hover to preview or click to edit in the compact, draggable plain text editor. Enter or ✓ saves and hides it; Shift+Enter adds a line. Clicking outside saves nonempty text and dismisses the editor; × removes the comment.
+
+Click or drag line numbers in a changed file to open an editable inline comment row. Overlapping comments are combined into that range. Inline comments save automatically, remain editable, and have an × to remove them.
+
+The final **Review** step puts all section comments into one editable summary, followed by file comments and syntax-highlighted inline diffs. File headers open the full source in the right pane. Comments and summary edits are saved in the repository's SQLite review database. **Publish draft comments** creates a [pending GitHub review](https://docs.github.com/en/rest/pulls/reviews#create-a-review-for-a-pull-request) and opens the PR's files page. Submit the finished review on GitHub. These controls are hidden for revision comparisons without a GitHub PR.
+
+Line ranges are mapped from the narrative to the captured PR diff. If a range no longer exists there, the preview asks you to choose another range or move the comment to the file. Publication checks that the PR still has the captured head commit. An interrupted publish can be retried without duplicating comments already sent.
+
 ## Agent skill
 
 For Codex, install the skill from `packages/heptapod-skill/skills/heptapod` in this repository. For Claude Code, add this repository as a plugin marketplace and install the `heptapod` plugin.

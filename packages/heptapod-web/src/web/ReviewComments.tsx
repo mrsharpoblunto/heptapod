@@ -1,0 +1,429 @@
+"use client";
+
+import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Check, ExternalLink, GripHorizontal, MessageSquare, Send, X } from "lucide-react";
+import type { RenderModel, RenderStep, ReviewComment, ReviewCommentTarget, ReviewDraft, ReviewDraftPreview } from "@thestraylight/heptapod/types";
+import { GitHubIcon } from "./GitHubIdentity";
+
+interface DraftState { draft: ReviewDraft; preview: ReviewDraftPreview }
+interface AnchorRect { left: number; right: number; top: number; bottom: number }
+interface CommentEditor { id: string; target: ReviewCommentTarget; body: string; anchorId?: string; position: { x: number; y: number } }
+interface ReviewCommentsContext {
+  model: RenderModel;
+  step: RenderStep;
+  state: DraftState | null;
+  saving: boolean;
+  locked: boolean;
+  error: string | null;
+  temporaryAnchor: string | null;
+  showTemporaryAnchor: (id: string | null) => void;
+  leaveTemporaryAnchor: (id: string) => void;
+  open: (target: ReviewCommentTarget, comment?: ReviewComment, rect?: AnchorRect, anchorId?: string) => void;
+  beginCodeComment: (target: Extract<ReviewCommentTarget, { kind: "line" }>) => void;
+  updateCodeComment: (id: string, body: string) => void;
+  removeCodeComment: (id: string) => void;
+  flushCodeComments: () => void;
+  updateSummary: (summary: string) => void;
+  focusedComment: { id: string; sequence: number } | null;
+  save: (comments: ReviewComment[], summary: string) => Promise<DraftState>;
+  publish: () => Promise<void>;
+  renderMarkdown: (source: string) => ReactNode;
+}
+
+const CommentsContext = createContext<ReviewCommentsContext | null>(null);
+export function useReviewComments(): ReviewCommentsContext | null { return useContext(CommentsContext); }
+
+export function ReviewCommentsProvider({ model, reviewId, step, children, renderMarkdown }: {
+  model: RenderModel; reviewId: string; step: RenderStep; children: ReactNode; renderMarkdown: (source: string) => ReactNode;
+}) {
+  const [state, setState] = useState<DraftState | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [editor, setEditor] = useState<CommentEditor | null>(null);
+  const [temporaryAnchor, setTemporaryAnchor] = useState<string | null>(null);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [focusedComment, setFocusedComment] = useState<{ id: string; sequence: number } | null>(null);
+  const current = useRef<DraftState | null>(null);
+  const version = useRef(0);
+  const revision = useRef(0);
+  const persistedRevision = useRef(0);
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const autosave = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const busy = useRef(false);
+  const endpoint = `/api/reviews/${encodeURIComponent(reviewId)}/draft`;
+  const enabled = Boolean(model.source.github);
+  const locked = Boolean(state?.draft.githubReviewId || state?.draft.publishedAt || state?.draft.publishing);
+
+  const showTemporaryAnchor = (id: string | null) => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    setTemporaryAnchor(id);
+  };
+  const leaveTemporaryAnchor = (id: string) => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setTemporaryAnchor((current) => current === id ? null : current), 400);
+  };
+  useEffect(() => {
+    const dismiss = () => {
+      if (hoverTimer.current) clearTimeout(hoverTimer.current);
+      setTemporaryAnchor(null);
+    };
+    dismiss();
+    window.addEventListener("scroll", dismiss, true);
+    return () => {
+      window.removeEventListener("scroll", dismiss, true);
+      if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    };
+  }, [step.id]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    void fetch(endpoint, { signal: controller.signal }).then(async (response) => {
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Could not load review comments.");
+      current.current = result; version.current = result.draft.version; setState(result);
+    }).catch((error) => {
+      if (!controller.signal.aborted) setError(error instanceof Error ? error.message : String(error));
+    });
+    return () => controller.abort();
+  }, [enabled, endpoint]);
+
+  const stage = (comments: ReviewComment[], summary: string, summaryIsCombined = current.current?.draft.summaryIsCombined) => {
+    if (!current.current) throw new Error("The review is still loading.");
+    if (summaryIsCombined && summary === current.current.draft.summary) {
+      summary = reconcileSummary(summary, current.current.draft.comments, comments, model.steps);
+    }
+    revision.current += 1;
+    const next = { ...current.current, draft: { ...current.current.draft, comments, summary, summaryIsCombined } };
+    current.current = next;
+    setState(next);
+    setSaving(true);
+  };
+
+  const persist = (): Promise<DraftState> => {
+    if (autosave.current) { clearTimeout(autosave.current); autosave.current = null; }
+    const requested = revision.current;
+    const task = queue.current.catch(() => {}).then(async () => {
+      if (!current.current) throw new Error("The review is still loading.");
+      if (persistedRevision.current >= requested) return current.current;
+      const snapshot = current.current;
+      const savingRevision = revision.current;
+      setError(null);
+      try {
+        const response = await fetch(endpoint, { method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ version: version.current, summary: snapshot.draft.summary, summaryIsCombined: snapshot.draft.summaryIsCombined,
+            comments: snapshot.draft.comments.filter((comment) => comment.body.trim()) }) });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? "Could not save the comment.");
+        version.current = result.draft.version;
+        persistedRevision.current = savingRevision;
+        // Keep newer typing and empty inline editors while refreshing the server preview.
+        const next = { ...result, draft: { ...result.draft, comments: current.current.draft.comments, summary: current.current.draft.summary, summaryIsCombined: current.current.draft.summaryIsCombined } };
+        current.current = next;
+        setState(next);
+        if (savingRevision === revision.current) setSaving(false);
+        return next;
+      } catch (error) {
+        setError(error instanceof Error ? error.message : String(error));
+        throw error;
+      }
+    });
+    queue.current = task;
+    return task;
+  };
+
+  const save = (comments: ReviewComment[], summary: string): Promise<DraftState> => {
+    stage(comments, summary);
+    return persist();
+  };
+
+  const editCodeComments = (change: (comments: ReviewComment[]) => ReviewComment[]) => {
+    if (!current.current || locked) return;
+    stage(change(current.current.draft.comments), current.current.draft.summary);
+    if (autosave.current) clearTimeout(autosave.current);
+    autosave.current = setTimeout(() => { void persist().catch(() => {}); }, 350);
+  };
+
+  const beginCodeComment = (target: Extract<ReviewCommentTarget, { kind: "line" }>) => {
+    if (!current.current || locked) return;
+    const merged = mergeCodeComments(current.current.draft.comments, target, crypto.randomUUID());
+    editCodeComments(() => merged.comments);
+    setFocusedComment((previous) => ({ id: merged.id, sequence: (previous?.sequence ?? 0) + 1 }));
+  };
+
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (revision.current > persistedRevision.current) { event.preventDefault(); }
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => { window.removeEventListener("beforeunload", warn); if (autosave.current) clearTimeout(autosave.current); };
+  }, []);
+
+  const publish = async () => {
+    if (!state || busy.current || revision.current > persistedRevision.current) return;
+    // Open during the click so the browser does not block the eventual GitHub tab.
+    const tab = window.open("about:blank", "_blank");
+    if (tab) tab.opener = null;
+    busy.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await fetch(`${endpoint}/publish`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: state.draft.version }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Could not publish draft comments.");
+      current.current = result; setState(result);
+      if (tab && result.draft.githubUrl) tab.location.href = result.draft.githubUrl;
+    } catch (error) {
+      tab?.close();
+      setError(error instanceof Error ? error.message : String(error));
+      // A partially published draft remains recoverable on the next attempt.
+      const response = await fetch(endpoint).catch(() => null);
+      if (response?.ok) { const refreshed = await response.json(); current.current = refreshed; setState(refreshed); }
+    } finally { busy.current = false; setSaving(false); }
+  };
+
+  const open = (target: ReviewCommentTarget, comment?: ReviewComment, rect?: AnchorRect, anchorId?: string) => {
+    if (!state || locked) return;
+    const width = Math.min(360, window.innerWidth - 32);
+    const height = target.kind === "quote" ? 160 : 96;
+    const bounds = rect ?? document.activeElement?.getBoundingClientRect();
+    let x = window.innerWidth - width - 20;
+    let y = 100;
+    if (bounds) {
+      if (bounds.right + width + 16 < window.innerWidth) x = bounds.right + 8;
+      else if (bounds.left - width - 8 > 16) x = bounds.left - width - 8;
+      else { x = Math.max(16, Math.min(bounds.left, window.innerWidth - width - 16)); }
+      y = Math.max(16, Math.min(bounds.top - 6, window.innerHeight - height - 16));
+      if (x < bounds.right && x + width > bounds.left) y = bounds.top > height + 16 ? bounds.top - height - 12 : bounds.bottom + 12;
+    }
+    setEditor({ id: comment?.id ?? crypto.randomUUID(), target, body: comment?.body ?? "", anchorId, position: { x, y: Math.max(16, Math.min(y, window.innerHeight - height - 16)) } });
+  };
+
+  const pinnedAnchor = editor && !state?.draft.comments.some((comment) => comment.id === editor.id && comment.body.trim()) ? editor.anchorId : null;
+  if (!enabled) return children;
+  return <CommentsContext.Provider value={{ model, step, state, saving, locked, error, temporaryAnchor: pinnedAnchor ?? temporaryAnchor, showTemporaryAnchor, leaveTemporaryAnchor, open, beginCodeComment,
+    updateCodeComment: (id, body) => editCodeComments((comments) => comments.map((comment) => comment.id === id ? { ...comment, body } : comment)),
+    removeCodeComment: (id) => editCodeComments((comments) => comments.filter((comment) => comment.id !== id)),
+    updateSummary: (summary) => {
+      if (!current.current || locked) return;
+      stage(current.current.draft.comments, summary, true);
+      if (autosave.current) clearTimeout(autosave.current);
+      autosave.current = setTimeout(() => { void persist().catch(() => {}); }, 350);
+    },
+    flushCodeComments: () => { void persist().catch(() => {}); }, focusedComment, save, publish, renderMarkdown }}>
+    {children}
+    {error && <div className="draft-error-toast" role="alert">{error}{revision.current > persistedRevision.current && <button onClick={() => { void persist().catch(() => {}); }}>Retry saving</button>}<button aria-label="Dismiss comment error" onClick={() => setError(null)}><X size={14} /></button></div>}
+    {editor && <CommentDialog key={editor.id} editor={editor} onChange={setEditor} onClose={() => setEditor(null)} onSave={async (remove) => {
+      const latest = current.current;
+      if (!latest) return;
+      const exists = latest.draft.comments.some((comment) => comment.id === editor.id);
+      const comment = { id: editor.id, target: editor.target, body: editor.body.trim() };
+      const comments = remove ? latest.draft.comments.filter((c) => c.id !== editor.id)
+        : exists ? latest.draft.comments.map((c) => c.id === editor.id ? comment : c) : [...latest.draft.comments, comment];
+      await save(comments, latest.draft.summary);
+      setEditor((active) => active?.id === editor.id ? null : active);
+    }} />}
+  </CommentsContext.Provider>;
+}
+
+function CommentDialog({ editor, onChange, onClose, onSave }: {
+  editor: CommentEditor; onChange: (editor: CommentEditor) => void; onClose: () => void; onSave: (remove: boolean) => Promise<void>;
+}) {
+  const context = useReviewComments()!;
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const submit = async (remove: boolean) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true; setSubmitting(true);
+    try { await onSave(remove); } finally { submittingRef.current = false; setSubmitting(false); }
+  };
+  const dialog = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  useEffect(() => { dialog.current?.querySelector("textarea")?.focus(); }, []);
+  useEffect(() => {
+    const outside = (event: globalThis.PointerEvent) => {
+      if (submitting || !(event.target instanceof Node) || dialog.current?.contains(event.target)) return;
+      if (editor.body.trim()) {
+        const saved = context.state?.draft.comments.find((comment) => comment.id === editor.id);
+        if (saved?.body === editor.body.trim()) onClose();
+        else void submit(false).catch(() => {});
+      } else onClose();
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [submitting, context.state, editor.body, editor.id, onClose, submit]);
+  const save = (remove: boolean) => { void submit(remove).catch(() => {}); };
+  const target = editor.target;
+  const existing = context.state?.draft.comments.some((comment) => comment.id === editor.id);
+  return <div className="comment-dialog" ref={dialog} role="dialog" aria-label={target.kind === "line" ? "Code comment" : "Review comment"} style={{ left: editor.position.x, top: editor.position.y }} onKeyDown={(event) => { if (event.key === "Escape" && !submitting) onClose(); }}>
+    <div className="code-comment-heading"><div className="comment-drag-handle" title="Drag to move" onPointerDown={(event) => {
+      if (event.button !== 0) return;
+      event.preventDefault(); drag.current = { x: event.clientX, y: event.clientY, left: editor.position.x, top: editor.position.y }; event.currentTarget.setPointerCapture(event.pointerId);
+    }} onPointerMove={(event) => {
+      if (!drag.current) return;
+      const rect = dialog.current!.getBoundingClientRect();
+      onChange({ ...editor, position: { x: Math.max(8, Math.min(window.innerWidth - rect.width - 8, drag.current.left + event.clientX - drag.current.x)), y: Math.max(8, Math.min(window.innerHeight - rect.height - 8, drag.current.top + event.clientY - drag.current.y)) } });
+    }} onPointerUp={(event) => { drag.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }} onPointerCancel={() => { drag.current = null; }}>
+      <GripHorizontal size={12} /><strong>Draft comment</strong></div>
+      <button className="comment-save" aria-label="Save comment" title="Save and dismiss" disabled={submitting} onClick={() => editor.body.trim() ? save(false) : onClose()}><Check size={14} /></button>
+      <button aria-label="Remove comment" title="Remove comment" disabled={submitting} onClick={() => existing ? save(true) : onClose()}><X size={14} /></button></div>
+    {target.kind === "quote" && <blockquote className="comment-quote">{target.quote}</blockquote>}
+    <div className="compact-comment-row"><textarea aria-label="Comment" placeholder="Add a comment…" rows={2} value={editor.body} disabled={submitting} title="Enter to save. Shift+Enter for a new line."
+      onChange={(event) => onChange({ ...editor, body: event.target.value })}
+      onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if ((editor.body.trim() || existing) && !submitting) save(!editor.body.trim()); } }} />
+    </div>
+    {context.error && <p className="draft-error" role="alert">{context.error}</p>}
+  </div>;
+}
+
+export function CommentAnchor({ target, children, inline = false }: { target: ReviewCommentTarget; children: ReactNode; inline?: boolean }) {
+  const context = useReviewComments();
+  const instanceId = useId();
+  const anchor = useRef<HTMLDivElement & HTMLSpanElement>(null);
+  const [gutter, setGutter] = useState(-30);
+  const [dismissedPreview, setDismissedPreview] = useState<string | null>(null);
+  useEffect(() => {
+    const element = anchor.current;
+    if (!element) return;
+    const container = element.closest(".step-content, .detail-panel-content");
+    if (!container) return;
+    const place = () => {
+      const padding = parseFloat(getComputedStyle(container).paddingLeft);
+      setGutter(container.getBoundingClientRect().left + Math.max(2, padding - 30) - element.getBoundingClientRect().left);
+    };
+    place();
+    const observer = new ResizeObserver(place); observer.observe(container); observer.observe(element);
+    window.addEventListener("resize", place);
+    return () => { observer.disconnect(); window.removeEventListener("resize", place); };
+  }, [context?.step.id]);
+  if (!context) return children;
+  const saved = context.state?.draft.comments.filter((comment) => comment.target.stepId === target.stepId && comment.target.anchor === target.anchor) ?? [];
+  const hasComments = saved.some((comment) => comment.body.trim());
+  const Tag = inline ? "span" : "div";
+  return <Tag ref={anchor} className={`comment-anchor${inline ? " comment-anchor-inline" : ""}${context.temporaryAnchor === instanceId ? " comment-hovered" : ""}`}
+    onPointerMove={(event) => {
+      event.stopPropagation();
+      // Scrolling beneath a stationary pointer must not reveal another temporary icon.
+      if (event.movementX || event.movementY) context.showTemporaryAnchor(hasComments ? null : instanceId);
+    }}
+    onFocus={(event) => { event.stopPropagation(); context.showTemporaryAnchor(hasComments ? null : instanceId); }}
+    onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) context.leaveTemporaryAnchor(instanceId); }}
+    onMouseLeave={() => context.leaveTemporaryAnchor(instanceId)}>
+    <span className={`comment-bubbles${hasComments ? " has-comments" : ""}`} style={{ left: gutter }}>{(saved.length ? saved : [null]).map((comment) => <span className="comment-bubble-wrap" key={comment?.id ?? "new"} onMouseLeave={() => setDismissedPreview(null)}>
+      <button className={`comment-bubble${comment?.body.trim() ? " comment-bubble-filled" : ""}`} aria-label={comment ? "Edit review comment" : "Add review comment"}
+        disabled={!context.state || context.locked} onClick={(event) => { event.stopPropagation(); context.open(comment?.target ?? target, comment ?? undefined, event.currentTarget.getBoundingClientRect(), instanceId); }}><MessageSquare size={15} /></button>
+      {comment?.body && dismissedPreview !== comment.id && <span className="comment-hover" role="tooltip">
+        <span className="code-comment-heading"><MessageSquare size={13} /><strong>Draft comment</strong>
+          <button className="comment-save" aria-label="Dismiss comment preview" onClick={(event) => { event.stopPropagation(); setDismissedPreview(comment.id); }}><Check size={14} /></button>
+          <button aria-label="Remove comment" disabled={context.locked} onClick={(event) => { event.stopPropagation(); context.removeCodeComment(comment.id); }}><X size={14} /></button>
+        </span><span className="compact-comment-text" onClick={(event) => { event.stopPropagation(); context.open(comment.target, comment, event.currentTarget.closest(".comment-bubble-wrap")?.getBoundingClientRect(), instanceId); }}>{comment.body}</span>
+      </span>}
+    </span>)}</span>{children}
+  </Tag>;
+}
+
+export function AnnotatedMarkdown({ anchor, section, children }: { anchor: string; section?: string; children: ReactNode }) {
+  const context = useReviewComments();
+  if (!context) return children;
+  return <CommentAnchor target={{ kind: "section", stepId: context.step.id, anchor, section: section ?? context.step.title }}>{children}</CommentAnchor>;
+}
+
+export function reconcileSummary(summary: string, previous: ReviewComment[], next: ReviewComment[], steps: RenderStep[]): string {
+  const narrative = (comment: ReviewComment) => comment.target.kind === "section" || comment.target.kind === "quote";
+  for (const comment of previous.filter(narrative)) {
+    const updated = next.find((candidate) => candidate.id === comment.id && narrative(candidate));
+    if (updated?.body === comment.body) continue;
+    // Only replace complete comment paragraphs, preserving edits authored in the combined summary.
+    const padded = `\n\n${summary}\n\n`;
+    const block = `\n\n${comment.body.trim()}\n\n`;
+    if (padded.includes(block)) summary = padded.replace(block, `\n\n${updated?.body.trim() ?? ""}\n\n`).trim();
+  }
+  for (const comment of next.filter(narrative)) {
+    const old = previous.find((candidate) => candidate.id === comment.id && narrative(candidate));
+    if (old?.body === comment.body || summary.includes(comment.body.trim())) continue;
+    if (old && !comment.body.trim()) continue;
+    const step = steps.find((step) => step.id === comment.target.stepId);
+    const section = "section" in comment.target ? comment.target.section : "";
+    const heading = `## ${step?.title ?? "Review"}${section && section !== step?.title ? `\n\n### ${section}` : ""}`;
+    summary = `${summary.trim()}\n\n${heading}\n\n${comment.body.trim()}`.trim();
+  }
+  return summary;
+}
+
+export function mergeCodeComments(comments: ReviewComment[], target: Extract<ReviewCommentTarget, { kind: "line" }>, newId: string): { comments: ReviewComment[]; id: string } {
+  const overlaps = comments.filter((comment) => comment.target.kind === "line" && comment.target.stepId === target.stepId
+    && comment.target.path === target.path && comment.target.side === target.side
+    && comment.target.startLine <= target.endLine && target.startLine <= comment.target.endLine);
+  overlaps.sort((a, b) => (a.target.kind === "line" ? a.target.startLine : 0) - (b.target.kind === "line" ? b.target.startLine : 0));
+  const id = overlaps[0]?.id ?? newId;
+  const removed = new Set(overlaps.map((comment) => comment.id));
+  const comment: ReviewComment = { id, target, body: overlaps.map((comment) => comment.body.trim()).filter(Boolean).join("\n\n") };
+  return { id, comments: [...comments.filter((comment) => !removed.has(comment.id)), comment] };
+}
+
+export function CodeCommentBlock({ comment, autofocus = true }: { comment: ReviewComment; autofocus?: boolean }) {
+  const context = useReviewComments();
+  const input = useRef<HTMLTextAreaElement>(null);
+  const focused = context?.focusedComment;
+  useEffect(() => {
+    if (autofocus && focused?.id === comment.id) input.current?.focus({ preventScroll: true });
+  }, [focused, comment.id, autofocus]);
+  useEffect(() => {
+    if (input.current) { input.current.style.height = "auto"; input.current.style.height = `${Math.max(50, input.current.scrollHeight)}px`; }
+  }, [comment.body]);
+  if (!context) return null;
+  return <div className="code-comment-block"><div className="code-comment-heading"><MessageSquare size={13} /><strong>Draft comment</strong>
+    <button aria-label="Remove code comment" title="Remove comment" disabled={context.locked} onClick={() => context.removeCodeComment(comment.id)}><X size={14} /></button></div>
+    <textarea ref={input} aria-label="Code comment" placeholder="Add a comment…" value={comment.body} disabled={context.locked}
+      onChange={(event) => context.updateCodeComment(comment.id, event.target.value)} onBlur={context.flushCodeComments} />
+  </div>;
+}
+
+export function FinalReview({ renderThread }: { renderThread: (comment: ReviewComment) => ReactNode }) {
+  const context = useReviewComments()!;
+  const state = context.state;
+  const summary = state?.draft.summaryIsCombined ? state.draft.summary : state?.preview.body ?? "";
+  const summaryInput = useRef<HTMLTextAreaElement>(null);
+  const headerStart = useRef<HTMLDivElement>(null);
+  const [headerStuck, setHeaderStuck] = useState(false);
+  const loaded = Boolean(state);
+  useEffect(() => {
+    const marker = headerStart.current;
+    const container = marker?.closest(".step-content");
+    if (!marker || !container) return;
+    const update = () => setHeaderStuck(marker.getBoundingClientRect().top <= container.getBoundingClientRect().top);
+    update();
+    container.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    return () => { container.removeEventListener("scroll", update); window.removeEventListener("resize", update); };
+  }, [loaded]);
+  useEffect(() => {
+    if (summaryInput.current) { summaryInput.current.style.height = "auto"; summaryInput.current.style.height = `${Math.max(140, summaryInput.current.scrollHeight)}px`; }
+  }, [summary]);
+  if (!state) return <div className="draft-review"><header className="draft-review-header"><h1><GitHubIcon size={30} />GitHub review</h1></header><p>{context.error ?? "Loading your draft…"}</p></div>;
+  return <div className="draft-review"><div ref={headerStart} aria-hidden="true" /><header className={`draft-review-header${headerStuck ? " is-sticky" : ""}`}><h1><GitHubIcon size={30} />GitHub review</h1>
+    <div className="draft-review-actions">
+      {state.draft.githubUrl && <a href={state.draft.githubUrl} target="_blank" rel="noreferrer">Open GitHub review <ExternalLink size={14} /></a>}
+      {!state.draft.publishedAt && <button className="draft-primary" disabled={context.saving || state.draft.publishing || Boolean(state.preview.errors.length) || (!summary.trim() && !state.preview.threads.length)} onClick={() => { void context.publish(); }}><Send size={15} />{context.saving ? "Saving…" : "Publish draft comments"}</button>}
+    </div>
+    </header>
+    <textarea className="draft-summary-input" ref={summaryInput} aria-label="Review summary" placeholder="Write your review summary…" value={summary}
+      disabled={context.locked} onChange={(event) => context.updateSummary(event.target.value)} onBlur={context.flushCodeComments} />
+    <div className="draft-threads">
+      {state.draft.comments.filter((comment) => comment.target.kind === "file" || comment.target.kind === "line").map((comment) => {
+        const thread = state.preview.threads.find((thread) => thread.commentId === comment.id);
+        return <article className="draft-thread" key={comment.id}>
+          {renderThread(comment)}
+          {thread?.error && <div className="draft-error"><p>{thread.error}</p><button disabled={context.locked || context.saving} onClick={() => {
+            const target: ReviewCommentTarget = comment.target.kind === "line" && context.model.source.files?.some((file) => file.path === thread.path)
+              ? { kind: "file", stepId: comment.target.stepId, anchor: `file:${thread.path}`, path: thread.path }
+              : { kind: "section", stepId: comment.target.stepId, anchor: "section", section: context.model.steps.find((s) => s.id === comment.target.stepId)?.title ?? "Review" };
+            void context.save(state.draft.comments.map((c) => c.id === comment.id ? { ...c, target } : c), state.draft.summary).catch(() => {});
+          }}>Move to {comment.target.kind === "line" && context.model.source.files?.some((file) => file.path === thread.path) ? "file comment" : "step summary"}</button></div>}
+        </article>;
+      })}
+    </div>
+    {state.preview.errors.length > 0 && <div className="draft-error" role="alert">Resolve the comment locations above before publishing.{state.preview.errors.filter((error) => !state.preview.threads.some((thread) => error === `${thread.path}: ${thread.error}`)).map((error) => <p key={error}>{error}</p>)}</div>}
+
+  </div>;
+}

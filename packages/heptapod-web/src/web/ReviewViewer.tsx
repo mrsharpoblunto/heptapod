@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import {
   createContext,
+  Fragment,
   useEffect,
   useContext,
   useMemo,
@@ -40,13 +41,15 @@ import type {
   PatchFile,
   RenderModel,
   RenderStep,
+  ReviewComment,
+  ParsedTestCaseChange,
   TestFixtureRun,
 } from "@thestraylight/heptapod/types";
 import {
   GitHubIcon,
 } from "./GitHubIdentity";
-import { useReviewBackdropState } from "./PersistentBackdrop";
 import { ReviewHeader } from "./ReviewHeader";
+import { AnnotatedMarkdown, CodeCommentBlock, CommentAnchor, FinalReview, ReviewCommentsProvider, useReviewComments } from "./ReviewComments";
 
 function classNames(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -134,13 +137,20 @@ function Markdown({
   source,
   files = [],
   onSelectFile,
+  annotationKey,
+  section,
+  annotatable = true,
 }: {
   source: string;
   files?: PatchFile[];
   onSelectFile?: (file: string) => void;
+  annotationKey?: string;
+  section?: string;
+  annotatable?: boolean;
 }): ReactNode {
   const lines = String(source || "").replace(/\r\n/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
+  const sections: Array<{ start: number; title?: string }> = [{ start: 0, title: section }];
   let index = 0;
   while (index < lines.length) {
     const line = lines[index];
@@ -156,6 +166,8 @@ function Markdown({
     }
     const heading = line.match(/^(#{1,4})\s+(.+)$/);
     if (heading) {
+      if (!blocks.length) sections[0].title = heading[2];
+      else sections.push({ start: blocks.length, title: heading[2] });
       const Tag = `h${Math.min(heading[1].length + 1, 5)}` as ElementType;
       blocks.push(<Tag key={blocks.length}><Inline text={heading[2]} files={files} onSelectFile={onSelectFile} /></Tag>);
       index += 1;
@@ -186,7 +198,9 @@ function Markdown({
     }
     blocks.push(<p key={blocks.length}><Inline text={paragraph.join(" ")} files={files} onSelectFile={onSelectFile} /></p>);
   }
-  return <div className="markdown">{blocks}</div>;
+  const key = annotationKey ?? `markdown:${Array.from(source).reduce((hash, char) => ((hash << 5) - hash + char.charCodeAt(0)) | 0, 0)}`;
+  return <div className="markdown">{annotatable ? sections.filter((group) => group.start < blocks.length).map((group, index) =>
+    <AnnotatedMarkdown key={index} anchor={`${key}:${index}`} section={group.title}>{blocks.slice(group.start, sections[index + 1]?.start)}</AnnotatedMarkdown>) : blocks}</div>;
 }
 
 function EvidenceGallery({ evidence }: { evidence: Evidence[] }): ReactNode {
@@ -281,6 +295,19 @@ export function buildDiffSegments(
   afterContent?: string | null,
 ): DiffSegment[] {
   const after = sourceLines(afterContent);
+  if (after.length > 0 && lines.every((line) => line.content === "")) {
+    return [{
+      kind: "lines",
+      id: "snapshot",
+      lines: after.map((content, index) => ({
+        content: ` ${content}`,
+        type: "context",
+        old: index + 1,
+        next: index + 1,
+        key: index,
+      })),
+    }];
+  }
   if (after.length === 0 || !lines.some((line) => line.type === "hunk")) {
     return [{ kind: "lines", id: "patch", lines }];
   }
@@ -345,6 +372,8 @@ export function DiffView({
   beforeContent,
   afterContent,
   githubFileUrl,
+  commentStepId,
+  snippetRange,
 }: {
   filePath: string;
   patch: string;
@@ -353,8 +382,16 @@ export function DiffView({
   beforeContent?: string | null;
   afterContent?: string | null;
   githubFileUrl?: string | null;
+  commentStepId?: string;
+  snippetRange?: { side: "LEFT" | "RIGHT"; startLine: number; endLine: number };
 }): ReactNode {
   const containerRef = useRef<HTMLDivElement>(null);
+  const comments = useReviewComments();
+  const annotationStep = commentStepId ?? comments?.step.id;
+  const canComment = Boolean(!snippetRange && comments?.model.source.files?.some((file) => file.path === filePath) && !comments.locked);
+  const codeComments = snippetRange ? [] : comments?.state?.draft.comments.filter((comment) => comment.target.kind === "line" && comment.target.stepId === annotationStep && comment.target.path === filePath) ?? [];
+  const [commentRange, setCommentRange] = useState<{ side: "LEFT" | "RIGHT"; start: number; end: number } | null>(null);
+  const dragRange = useRef<typeof commentRange>(null);
   const [expandedGaps, setExpandedGaps] = useState<Set<string>>(() => new Set());
   const [fullFile, setFullFile] = useState(false);
   const language = languageForFile(filePath);
@@ -374,6 +411,34 @@ export function DiffView({
     if (segment.kind === "lines") return segment.lines;
     return fullFile || expandedGaps.has(segment.gap.id) ? segment.gap.lines : [];
   }), [expandedGaps, fullFile, segments]);
+
+  useEffect(() => {
+    const finish = () => {
+      const range = dragRange.current;
+      dragRange.current = null;
+      setCommentRange(null);
+      if (!range || !comments) return;
+      const startLine = Math.min(range.start, range.end);
+      const endLine = Math.max(range.start, range.end);
+      comments.beginCodeComment({ kind: "line", stepId: annotationStep!, anchor: `code:${filePath}:${range.side}:${startLine}-${endLine}`, path: filePath, side: range.side, startLine, endLine });
+    };
+    const cancel = () => { dragRange.current = null; setCommentRange(null); };
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", cancel);
+    return () => { window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", cancel); };
+  }, [comments, filePath, annotationStep]);
+
+  useEffect(() => {
+    setExpandedGaps((current) => {
+      const next = new Set(current);
+      for (const segment of segments) {
+        if (segment.kind !== "gap") continue;
+        if (codeComments.some(({ target }) => target.kind === "line" && target.endLine >= (target.side === "LEFT" ? segment.gap.oldStart : segment.gap.newStart)
+          && target.endLine <= (target.side === "LEFT" ? segment.gap.oldEnd : segment.gap.newEnd))) next.add(segment.gap.id);
+      }
+      return next.size === current.size ? current : next;
+    });
+  }, [codeComments, segments]);
 
   useEffect(() => {
     setExpandedGaps(new Set());
@@ -431,14 +496,29 @@ export function DiffView({
     const omitMarker = (pureAddition && line.type === "add") || (pureDeletion && line.type === "del");
     const marker = isCodeLine && !omitMarker ? line.content.slice(0, 1) : "";
     const content = isCodeLine ? line.content.slice(1) : line.content;
-    return <div className={classNames(`diff-line diff-${line.type}`, targetMatch.keys.has(line.key) && "diff-target")} data-diff-key={line.key} key={line.key}>
+    const lineNumber = (number: number | null, side: "LEFT" | "RIGHT") => canComment && number !== null
+      ? <button className="line-number comment-line-number" aria-label={`Comment on ${side === "LEFT" ? "original" : "updated"} line ${number}`} title="Click or drag to comment" onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.preventDefault(); dragRange.current = { side, start: number, end: number }; setCommentRange(dragRange.current);
+      }} onPointerEnter={() => {
+        if (dragRange.current?.side !== side) return;
+        dragRange.current = { ...dragRange.current, end: number }; setCommentRange(dragRange.current);
+      }} onKeyDown={(event) => {
+        if ((event.key === "Enter" || event.key === " ") && comments) { event.preventDefault(); comments.beginCodeComment({ kind: "line", stepId: annotationStep!, anchor: `code:${filePath}:${side}:${number}`, path: filePath, side, startLine: number, endLine: number }); }
+      }}>{number}</button>
+      : <span className="line-number">{number ?? ""}</span>;
+    const selectedRange = commentRange && (commentRange.side === "LEFT" ? line.old : line.next);
+    const annotated = [...codeComments, ...(snippetRange ? [{ target: { kind: "line", ...snippetRange } }] : [])].some(({ target }) => target.kind === "line" && (target.side === "LEFT" ? line.old : line.next) !== null
+      && (target.side === "LEFT" ? line.old! : line.next!) >= target.startLine && (target.side === "LEFT" ? line.old! : line.next!) <= target.endLine);
+    const inSelection = selectedRange !== null && selectedRange !== undefined && commentRange && selectedRange >= Math.min(commentRange.start, commentRange.end) && selectedRange <= Math.max(commentRange.start, commentRange.end);
+    return <Fragment key={line.key}><div className={classNames(`diff-line diff-${line.type}`, targetMatch.keys.has(line.key) && "diff-target", Boolean(inSelection || annotated) && "diff-comment-range")} data-diff-key={line.key}>
       {pureAddition || unchanged
-        ? <span className="line-number">{line.next ?? ""}</span>
+        ? lineNumber(line.next, "RIGHT")
         : pureDeletion
-          ? <span className="line-number">{line.old ?? ""}</span>
-          : <><span className="line-number">{line.old ?? ""}</span><span className="line-number">{line.next ?? ""}</span></>}
+          ? lineNumber(line.old, "LEFT")
+          : <>{lineNumber(line.old, "LEFT")}{lineNumber(line.next, "RIGHT")}</>}
       <code>{marker && <span className="diff-marker">{marker}</span>}<span className="hljs" dangerouslySetInnerHTML={{ __html: highlightedHtml(content, language) }} /></code>
-    </div>;
+    </div>{codeComments.filter(({ target }) => target.kind === "line" && target.endLine === (target.side === "LEFT" ? line.old : line.next)).map((comment) => <CodeCommentBlock comment={comment} key={comment.id} />)}</Fragment>;
   };
   const gaps = segments.filter((segment): segment is Extract<DiffSegment, { kind: "gap" }> => segment.kind === "gap");
   const globalActions = <div className="diff-global-actions">
@@ -458,6 +538,15 @@ export function DiffView({
     </a>}
   </div>;
 
+  if (snippetRange) {
+    const allLines = segments.flatMap((segment) => segment.kind === "lines" ? segment.lines : segment.gap.lines);
+    const side = snippetRange.side === "LEFT" ? "old" : "next";
+    const start = allLines.findIndex((line) => line[side] === snippetRange.startLine);
+    const end = allLines.findIndex((line) => line[side] === snippetRange.endLine);
+    const snippet = start < 0 ? [] : allLines.slice(Math.max(0, start - 2), Math.min(allLines.length, Math.max(start, end) + 3));
+    return <div className="diff-shell"><div className={classNames("diff", "diff-compact", (pureAddition || pureDeletion || unchanged) && "diff-pure")}>
+      <div className="diff-lines">{snippet.map(renderLine)}</div></div></div>;
+  }
   return <div className="diff-shell">
     <div className={classNames("diff", compact && "diff-compact", (pureAddition || pureDeletion || unchanged) && "diff-pure")} ref={containerRef}>
       {gaps.length === 0 && githubFileUrl && <div className="diff-gap diff-control-gap">{globalActions}</div>}
@@ -528,16 +617,19 @@ function TestFixtureResult({
   run,
   active,
   onSelectFile,
+  stepId,
 }: {
   run: TestFixtureRun;
+  stepId?: string;
   active: boolean;
   onSelectFile: (file: string) => void;
 }): ReactNode {
+  const review = useReviewComments();
   const [expanded, setExpanded] = useState(false);
   const separator = run.file.lastIndexOf("/");
   const directory = separator === -1 ? "" : run.file.slice(0, separator + 1);
   const filename = separator === -1 ? run.file : run.file.slice(separator + 1);
-  return <div className={classNames("test-fixture-run", expanded && "expanded")}>
+  return <CommentAnchor target={{ kind: "file", stepId: stepId ?? review?.step.id ?? "", anchor: `fixture:${run.file}`, path: run.file }}><div className={classNames("test-fixture-run", expanded && "expanded")}>
     <button
       aria-label={`Open ${run.file} in diff`}
       className={classNames("test-fixture-file", active && "active")}
@@ -556,7 +648,7 @@ function TestFixtureResult({
       <FixtureStatus run={run} />
     </button> : <span className="test-fixture-status-static"><FixtureStatus run={run} /></span>}
     {run.output && <pre className="test-run-output" hidden={!expanded}>{run.output}</pre>}
-  </div>;
+  </div></CommentAnchor>;
 }
 
 export function newestFixtureRuns(steps: RenderStep[], stepIndex: number): TestFixtureRun[] {
@@ -617,6 +709,7 @@ function FileLink({
   onSelect,
   connected = false,
   connectedCollapsed = false,
+  annotatable = true,
   inline = false,
   change,
 }: {
@@ -626,16 +719,20 @@ function FileLink({
   onSelect: (file: string) => void;
   connected?: boolean;
   connectedCollapsed?: boolean;
+  annotatable?: boolean;
   inline?: boolean;
   change?: "added" | "removed" | "changed";
 }): ReactNode {
+  const review = useReviewComments();
+  const target = { kind: "file" as const, stepId: review?.step.id ?? "", anchor: `file:${file}:${label ?? ""}`, path: file };
   const separator = file.lastIndexOf("/");
   const directory = separator === -1 ? "" : file.slice(0, separator + 1);
   const filename = separator === -1 ? file : file.slice(separator + 1);
-  if (inline) return <button className="file-link file-link-inline" onClick={() => onSelect(file)} title={file}>
+  const wrap = (content: ReactNode) => annotatable ? <CommentAnchor target={target} inline={inline}>{content}</CommentAnchor> : content;
+  if (inline) return wrap(<button className="file-link file-link-inline" onClick={() => onSelect(file)} title={file}>
     <strong className="file-link-filename">{filename}</strong>
-  </button>;
-  return <button className={classNames("file-link", connected && "file-link-connected", connectedCollapsed && "connected-collapsed", active && "active", change && `test-case-${change}`)} onClick={() => onSelect(file)} title={file}>
+  </button>);
+  return wrap(<button className={classNames("file-link", connected && "file-link-connected", connectedCollapsed && "connected-collapsed", active && "active", change && `test-case-${change}`)} onClick={() => onSelect(file)} title={file}>
     {change && <ChangeIcon change={change} />}
     <span className="file-link-copy">
       {label && <span className="file-link-label">{label}</span>}
@@ -644,19 +741,31 @@ function FileLink({
         <strong className="file-link-filename">{filename}</strong>
       </span>
     </span>
-  </button>;
+  </button>);
 }
 
 function StepHeading({ step }: { step: RenderStep }): ReactNode {
   return <header className="step-heading">
     <div className="eyebrow">Step {step.number} · {kindLabel(step.kind)}</div>
     <h1>{step.title}</h1>
-    {step.patch && <div className="diff-stats"><span>+{step.stats.additions}</span><span>−{step.stats.deletions}</span><span>{step.stats.files} {step.stats.files === 1 ? "file" : "files"}</span></div>}
+    <div className="diff-stats">{step.patch && <><span>+{step.stats.additions}</span><span>−{step.stats.deletions}</span><span>{step.stats.files} {step.stats.files === 1 ? "file" : "files"}</span></>}</div>
   </header>;
 }
 
 function allStepFiles(step: RenderStep): PatchFile[] {
   return [...step.fileDiffs, ...(step.referenceFiles ?? [])];
+}
+
+export function resolveStepFile(steps: RenderStep[], stepIndex: number, path: string | null): PatchFile | undefined {
+  if (path === null) return undefined;
+  for (let index = stepIndex; index >= 0; index -= 1) {
+    const file = allStepFiles(steps[index]).find((candidate) => candidate.path === path);
+    if (!file) continue;
+    if (index === stepIndex) return file;
+    if (file.afterContent === null || file.afterContent === undefined) return undefined;
+    return { ...file, patch: "", beforeContent: file.afterContent };
+  }
+  return undefined;
 }
 
 function DescriptionStep({ step, onSelectFile }: StepViewProps): ReactNode {
@@ -678,7 +787,7 @@ function TestsStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNo
       {areas.map((area, index) => <section className="test-area" key={`${area.name}-${index}`}>
         <div className="test-area-description">
           <div className="test-area-heading"><h3>{area.name}</h3><span className="test-type-badge">Automated test</span></div>
-          <p>{area.description}</p>
+          <Markdown source={area.description} annotationKey={`area:${index}`} section={area.name} />
         </div>
         {area.files.map((file) => <div className="test-file" key={file.path}>
           <div className="connected-file-header">
@@ -701,6 +810,11 @@ function TestsStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNo
           </div>
           {!collapsedFiles.has(file.path) && (file.cases.length > 0 ? <ul className="test-case-list connected-case-list">
             {file.cases.map((testCase, caseIndex) => <li className={`test-case-${testCase.change}`} key={`${testCase.name}-${caseIndex}`}>
+              <CommentAnchor target={testCase.newLine === undefined && testCase.oldLine === undefined
+                ? { kind: "file", stepId: step.id, anchor: `test:${file.path}:${caseIndex}`, path: file.path }
+                : { kind: "line", stepId: step.id, anchor: `test:${file.path}:${caseIndex}`, path: file.path,
+                side: testCase.newLine !== undefined ? "RIGHT" : "LEFT", startLine: testCase.newLine ?? testCase.oldLine ?? 1,
+                endLine: testCase.newLine !== undefined ? testCase.newEndLine ?? testCase.newLine : testCase.oldEndLine ?? testCase.oldLine ?? 1 }}>
               <button className="test-case-link"
                 aria-label={`${testCase.change} test: ${testCase.name}`}
                 onClick={() => onSelectFile(file.path, {
@@ -714,6 +828,7 @@ function TestsStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNo
                 <ChangeIcon change={testCase.change} />
                 <code>{testCase.name}</code>
               </button>
+              </CommentAnchor>
             </li>)}
           </ul> : <p className="muted no-test-cases connected-empty-tests">No named test cases changed in this file.</p>)}
         </div>)}
@@ -766,9 +881,12 @@ function RefactorStep({ step, selectedFile, onSelectFile }: StepViewProps): Reac
     {step.body && <Markdown source={step.body} files={allStepFiles(step)} onSelectFile={onSelectFile} />}
     <div className="refactor-sections">
       {interfaces.map((item, index) => <section className="refactor-section" key={index}>
+        <CommentAnchor target={item.file || item.callsites[0]?.file
+          ? { kind: "file", stepId: step.id, anchor: `refactor:${index}`, path: item.file ?? item.callsites[0].file }
+          : { kind: "section", stepId: step.id, anchor: `refactor:${index}`, section: item.name }}>
         <div className="interface-change">
           <h3>{item.name}</h3>
-          {item.description && <p>{item.description}</p>}
+          {item.description && <Markdown source={item.description} annotationKey={`interface:${index}`} section={item.name} />}
           {(item.before || item.after) && <div className="before-after">
             {item.before && <div><span>Before</span><Markdown source={item.before} files={allStepFiles(step)} onSelectFile={onSelectFile} /></div>}
             {item.after && <div><span>After</span><Markdown source={item.after} files={allStepFiles(step)} onSelectFile={onSelectFile} /></div>}
@@ -784,6 +902,7 @@ function RefactorStep({ step, selectedFile, onSelectFile }: StepViewProps): Reac
             <ChangedFileList files={item.callsites} step={step} selectedFile={selectedFile} onSelectFile={onSelectFile} />
           </div>
         </div>
+        </CommentAnchor>
       </section>)}
     </div>
   </>;
@@ -869,9 +988,50 @@ function StepContent({
   return <DescriptionStep step={step} selectedFile={selectedFile} onSelectFile={onSelectFile} />;
 }
 
+export function reviewRailItems(model: RenderModel, comments: ReviewComment[]) {
+  const commented = new Map<string, { path: string; stepId: string }>();
+  for (const { body, target } of comments) {
+    if (body.trim() && (target.kind === "file" || target.kind === "line")) commented.set(target.path, { path: target.path, stepId: target.stepId });
+  }
+  const tests = new Map<string, { path: string; stepId: string; testCase: ParsedTestCaseChange; caseIndex: number }>();
+  for (const step of model.steps) for (const area of step.testAreas ?? []) for (const file of area.files) {
+    file.cases.forEach((testCase, caseIndex) => tests.set(JSON.stringify([file.path, testCase.name]), { path: file.path, stepId: step.id, testCase, caseIndex }));
+  }
+  return {
+    commentedFiles: [...commented.values()],
+    changedTests: [...tests.values()],
+    changedFiles: (model.source.files ?? []).map((file) => ({ ...file, stepId: model.steps.slice().reverse().find((step) => step.fileDiffs.some((changed) => changed.path === file.path))?.id ?? model.steps.at(-1)!.id })),
+  };
+}
+
+function ReviewSummaryRail({ onSelectFile }: { onSelectFile: (path: string, stepId: string, target?: DiffTarget) => void }) {
+  const context = useReviewComments()!;
+  const { commentedFiles, changedTests, changedFiles } = reviewRailItems(context.model, context.state?.draft.comments ?? []);
+  const changedTestFiles = [...new Map(changedTests.map((test) => [test.path, test])).values()];
+  const latestRuns = context.model.steps.slice().reverse().flatMap((step) => step.testRun?.fixtureRuns ?? []);
+  return <div className="review-summary-lists">
+    <section><h3 className="eyebrow">{commentedFiles.length} {commentedFiles.length === 1 ? "file" : "files"} commented on</h3>
+      <ul className="file-pills">{commentedFiles.map((file) => <li key={file.path}><FileLink file={file.path} active={false} onSelect={(path) => onSelectFile(path, file.stepId)} /></li>)}</ul>
+    </section>
+    <section><h3 className="eyebrow">{changedTests.length} test {changedTests.length === 1 ? "case" : "cases"} changed</h3>
+      <ul className="test-fixture-runs review-test-runs">{changedTestFiles.map(({ path, stepId }) => {
+        const run: TestFixtureRun = latestRuns.find((run) => run.file === path) ?? {
+          file: path, command: "", status: "not-run", expectedStatus: "not-specified", expectationMatched: null,
+          exitCode: null, durationMs: 0, observedFailures: [], unexpectedFailures: [], output: "",
+        };
+        return <li key={path}><TestFixtureResult run={run} stepId={stepId} active={false} onSelectFile={(file) => onSelectFile(file, stepId)} /></li>;
+      })}</ul>
+    </section>
+    <section><h3 className="eyebrow">{changedFiles.length} {changedFiles.length === 1 ? "file" : "files"} changed</h3>
+      <ul className="file-pills">{changedFiles.map((file) => <li key={file.path}><FileLink file={file.path} active={false} onSelect={(path) => onSelectFile(path, file.stepId)} /></li>)}</ul>
+    </section>
+  </div>;
+}
+
 function DetailPanel({
   step,
   source,
+  selected,
   selectedFile,
   onSelectFile,
   tabs,
@@ -886,11 +1046,16 @@ function DetailPanel({
   onResizePointerMove,
   onResizePointerUp,
   onResizeKeyDown,
+  reviewSummary = false,
+  onSelectReviewFile,
 }: StepViewProps & {
   source: RenderModel["source"];
   tabs: string[];
   onReorderTab: (from: string, to: string) => void;
   fixtureRuns: TestFixtureRun[];
+  selected: PatchFile | undefined;
+  reviewSummary?: boolean;
+  onSelectReviewFile?: (path: string, stepId: string, target?: DiffTarget) => void;
   onCloseFile: (file: string) => void;
   scrollTarget: DiffTarget | null;
   detailWidth: number;
@@ -944,7 +1109,6 @@ function DetailPanel({
     : <PanelRightClose aria-hidden="true" size={16} />}
   </button>;
   if (collapsed) return toggle;
-  const selected = allStepFiles(step).find((file) => file.path === selectedFile);
   const selectedGitHubUrl = selected ? githubFileUrl(source, selected) : null;
   return <aside className="detail-panel">
     <div
@@ -988,7 +1152,7 @@ function DetailPanel({
           onClick={() => onSelectFile("")}
           onKeyDown={(event) => moveWithKeyboard(event, file)}
           role="tab"
-        >Step summary</button> : <div
+        >{reviewSummary ? "Review summary" : "Step summary"}</button> : <div
           {...dragHandlers(file)}
           className={classNames("file-tab", selectedFile === file && "active", draggingTab === file && "tab-dragging", dropTarget === file && "tab-drop-target")}
           key={file}
@@ -1008,8 +1172,9 @@ function DetailPanel({
       {toggle}
     </div>
     {selectedFile === null && <div className="detail-panel-content">
-      <Checks step={step} fixtureRuns={fixtureRuns} selectedFile={selectedFile} onSelectFile={onSelectFile} />
-      {step.fileDiffs.length > 0 && <section className="changed-files">
+      {reviewSummary ? <ReviewSummaryRail onSelectFile={onSelectReviewFile!} />
+        : <Checks step={step} fixtureRuns={fixtureRuns} selectedFile={selectedFile} onSelectFile={onSelectFile} />}
+      {!reviewSummary && step.fileDiffs.length > 0 && <section className="changed-files">
         <div className="eyebrow">Files in this step</div>
         <div className="file-pills">{step.fileDiffs.map((file) => <FileLink file={file.path} active={false} onSelect={onSelectFile} key={file.path} />)}</div>
       </section>}
@@ -1018,6 +1183,7 @@ function DetailPanel({
       <div className="tab-diff">
         <DiffView
           filePath={selected.path}
+          commentStepId={step.id}
           patch={selected.patch}
           compact
           scrollTarget={scrollTarget}
@@ -1027,7 +1193,23 @@ function DetailPanel({
         />
       </div>
     </div>}
+    {!collapsed && selectedFile !== null && !selected && <div className="detail-panel-content">
+      <p className="muted">File content is unavailable at this step.</p>
+    </div>}
   </aside>;
+}
+
+function ReviewThread({ comment, model, onSelectFile }: { comment: ReviewComment; model: RenderModel; onSelectFile: (path: string, stepIndex: number, target?: DiffTarget) => void }) {
+  const target = comment.target;
+  if (target.kind !== "file" && target.kind !== "line") return null;
+  const stepIndex = model.steps.findIndex((step) => step.id === target.stepId);
+  const file = resolveStepFile(model.steps, stepIndex, target.path);
+  const location = target.kind === "line" ? target.side === "LEFT" ? { oldLine: target.startLine, oldEndLine: target.endLine } : { newLine: target.startLine, newEndLine: target.endLine } : undefined;
+  return <><header><FileLink file={target.path} active={false} annotatable={false}
+    onSelect={(path) => onSelectFile(path, stepIndex, location)} /></header>
+    {target.kind === "line" && file && <DiffView filePath={target.path} patch={file.patch} beforeContent={file.beforeContent} afterContent={file.afterContent} snippetRange={target} />}
+    <CodeCommentBlock comment={comment} autofocus={false} />
+  </>;
 }
 
 export function ReviewViewer({
@@ -1068,16 +1250,21 @@ export function ReviewViewer({
     return () => { stopped = true; clearTimeout(timer); };
   }, [reviewId, router, updatedAt, updating]);
 
-  useReviewBackdropState("ready");
-  const [stepId, setStepId] = useState(data.steps[0].id);
-  const stepIndex = Math.max(0, data.steps.findIndex((item) => item.id === stepId));
+  const [stepId, setStepId] = useState<string | null>(data.steps[0].id);
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [detailWidth, setDetailWidth] = useState(420);
   const [tabs, setTabs] = useState<string[]>([""]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [scrollTarget, setScrollTarget] = useState<DiffTarget | null>(null);
+  const [reviewFileSteps, setReviewFileSteps] = useState<Record<string, number>>({});
   const [detailPreferencesLoaded, setDetailPreferencesLoaded] = useState(false);
-  const step = data.steps[stepIndex];
+  const githubReview = Boolean(data.source.github);
+  const finalReview = githubReview && stepId === null;
+  const stepIndex = finalReview ? data.steps.length : Math.max(0, data.steps.findIndex((item) => item.id === stepId));
+  const totalSteps = data.steps.length + Number(githubReview);
+  const step = data.steps[Math.min(stepIndex, data.steps.length - 1)];
+  const detailStepIndex = finalReview && selectedFile ? reviewFileSteps[selectedFile] ?? data.steps.length - 1 : Math.min(stepIndex, data.steps.length - 1);
+  const selected = useMemo(() => resolveStepFile(data.steps, detailStepIndex, selectedFile), [data.steps, detailStepIndex, selectedFile]);
   const stepContentRef = useRef<HTMLDivElement>(null);
   const initializedFromLocation = useRef(false);
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
@@ -1158,6 +1345,7 @@ export function ReviewViewer({
   useEffect(() => {
     if (!initializedFromLocation.current) {
       initializedFromLocation.current = true;
+      if (githubReview && window.location.hash === "#review-draft") { setStepId(null); return; }
       const requestedIndex = data.steps.findIndex((item) => `#${item.id}` === window.location.hash);
       if (requestedIndex > 0) {
         setStepId(data.steps[requestedIndex].id);
@@ -1168,11 +1356,11 @@ export function ReviewViewer({
     setSelectedFile(null);
     setScrollTarget(null);
     stepContentRef.current?.scrollTo({ top: 0 });
-    history.replaceState(null, "", `#${step.id}`);
-    document.title = `${step.number}. ${step.title} — ${data.title}`;
-  }, [data.steps, data.title, step]);
+    history.replaceState(null, "", finalReview ? "#review-draft" : `#${step.id}`);
+    document.title = `${finalReview ? "Review" : `${step.number}. ${step.title}`} — ${data.title}`;
+  }, [data.steps, data.title, step, finalReview, githubReview]);
 
-  return <ReviewRuntimeContext.Provider value={{ reviewId }}><div className="app-shell">
+  return <ReviewCommentsProvider key={`${reviewId ?? data.source.base}:${data.source.head}`} model={data} reviewId={reviewId ?? String(data.source.github?.number ?? "")} step={step} renderMarkdown={(source) => <Markdown source={source} annotatable={false} />}><ReviewRuntimeContext.Provider value={{ reviewId }}><div className="app-shell">
     <header className="topbar">
       <ReviewHeader updating={isUpdating} review={{
         id: reviewId ?? `${data.source.base}/${data.source.head}`,
@@ -1205,32 +1393,43 @@ export function ReviewViewer({
             )} />
           </button>;
         })}
+        {githubReview && <button className={classNames("step-button", "review-step-button", finalReview && "active")} onClick={() => setStepId(null)}>
+          <span className="step-number">{String(totalSteps).padStart(2, "0")}</span><span className="step-copy"><span>Review</span><small>Prepare GitHub draft</small></span>
+        </button>}
       </nav>
       <main className="main-panel">
         <div className="step-content" ref={stepContentRef}>
-          <StepHeading step={step} />
-          <StepContent key={step.id} step={step} selectedFile={selectedFile} onSelectFile={openFile} source={data.source} />
+          {finalReview ? <FinalReview renderThread={(comment) => <ReviewThread comment={comment} model={data} onSelectFile={(path, index, target) => {
+            setReviewFileSteps((current) => ({ ...current, [path]: index })); openFile(path, target);
+          }} />} /> : <><StepHeading step={step} />
+          <StepContent key={step.id} step={step} selectedFile={selectedFile} onSelectFile={openFile} source={data.source} /></>}
         </div>
         <div className="step-pager">
           <div className="step-control" aria-label="Step navigation">
             <button aria-label="Previous step" disabled={stepIndex === 0} onClick={() => setStepId(data.steps[stepIndex - 1].id)}>
               <ChevronLeft aria-hidden="true" size={17} />
             </button>
-            <span>{stepIndex + 1} / {data.steps.length}</span>
-            <button aria-label="Next step" disabled={stepIndex === data.steps.length - 1} onClick={() => setStepId(data.steps[stepIndex + 1].id)}>
+            <span>{stepIndex + 1} / {totalSteps}</span>
+            <button aria-label="Next step" disabled={stepIndex === totalSteps - 1} onClick={() => setStepId(data.steps[stepIndex + 1]?.id ?? null)}>
               <ChevronRight aria-hidden="true" size={17} />
             </button>
           </div>
         </div>
       </main>
       <DetailPanel
-        step={step}
+        reviewSummary={finalReview}
+        onSelectReviewFile={(path, stepId, target) => {
+          setReviewFileSteps((current) => ({ ...current, [path]: data.steps.findIndex((step) => step.id === stepId) }));
+          openFile(path, target);
+        }}
+        step={data.steps[detailStepIndex]}
         source={data.source}
+        selected={selected}
         selectedFile={selectedFile}
         onSelectFile={openFile}
         tabs={tabs}
         onReorderTab={reorderTab}
-        fixtureRuns={newestFixtureRuns(data.steps, stepIndex)}
+        fixtureRuns={newestFixtureRuns(data.steps, detailStepIndex)}
         onCloseFile={closeFile}
         scrollTarget={scrollTarget}
         detailWidth={detailWidth}
@@ -1242,5 +1441,5 @@ export function ReviewViewer({
         onResizeKeyDown={handleResizeKeyDown}
       />
     </div>
-  </div></ReviewRuntimeContext.Provider>;
+  </div></ReviewRuntimeContext.Provider></ReviewCommentsProvider>;
 }

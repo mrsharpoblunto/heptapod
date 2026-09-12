@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { ReviewHeader, reviewPath, type ReviewHeaderData } from "./ReviewHeader";
 import type { ConnectedRepository } from "./connected-repository";
+import { HeptapodBackdrop } from "./HeptapodBackdrop";
 
 interface ReviewSummary extends ReviewHeaderData {
   status: "pending" | "ready" | "failed";
@@ -82,7 +83,7 @@ export function ReviewIndex({ reviews, repository }: { reviews: ReviewSummary[];
     }
   };
 
-  return <main className="review-index-scene">
+  return <><HeptapodBackdrop /><main className="review-index-scene">
     <div className="review-index">
       <h1 className="review-index-title">HEPTAPOD</h1>
       <section className="ingestion-help" aria-label="Ingestion instructions">
@@ -93,6 +94,11 @@ export function ReviewIndex({ reviews, repository }: { reviews: ReviewSummary[];
         <div className="ingestion-commands">
           <div><span>Pull request</span><code>pnpm exec heptapod capture --pr &lt;number&gt;</code><code>pnpm exec heptapod ingest --pr &lt;number&gt;</code></div>
           <div><span>Revision range</span><code>pnpm exec heptapod capture --rev &lt;base&gt;...&lt;target&gt;</code><code>pnpm exec heptapod ingest --rev &lt;base&gt;...&lt;target&gt;</code></div>
+        </div>
+        <div className="github-review-help"><h2>Prepare a GitHub review</h2>
+          <p>Install <a href="https://cli.github.com/" target="_blank" rel="noreferrer">GitHub CLI</a> on the machine running Heptapod. Sign in with an account that can review the PR.</p>
+          <div className="github-auth-commands"><code>gh auth login</code><code>gh auth status</code></div>
+          <p>Authentication is shared across repositories. Annotate a PR review, open the final Review step, then publish your draft comments. Submit the finished review on GitHub.</p>
         </div>
       </section>
       {error && <p className="review-index-error">{error}</p>}
@@ -108,5 +114,5 @@ export function ReviewIndex({ reviews, repository }: { reviews: ReviewSummary[];
           />)}
         </div>}
     </div>
-  </main>;
+  </main></>;
 }
