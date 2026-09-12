@@ -7,8 +7,12 @@ import { afterEach, test } from "vitest";
 import { loadHeptapodConfig } from "../src/tool/config.js";
 import { analyzeNarrative } from "../src/tool/test-analysis.js";
 import { executeNarrativeTests } from "../src/tool/test-execution.js";
-import { parseTestCases } from "../src/tool/test-fixtures/index.js";
+import { analyzeTestFixture, parseTestCases } from "../src/tool/test-fixtures/index.js";
 import { googletestRunner } from "../src/tool/test-runners/googletest.js";
+import { commandRunner } from "../src/tool/test-runners/command.js";
+import { runnerAdapters } from "../src/tool/test-runners/index.js";
+import { vitestRunner } from "../src/tool/test-runners/vitest.js";
+import type { TestRunnerAdapter } from "../src/tool/test-runners/types.js";
 import type { NarrativeManifest } from "../src/tool/types.js";
 
 const temporaryDirectories: string[] = [];
@@ -25,6 +29,14 @@ test("fixture formats are independent and auto detection keeps JavaScript suppor
   assert.equal(parseTestCases("it('works', () => true)", "test.ts")[0].name, "works");
   assert.deepEqual(parseTestCases("TEST(Suite, Works) {}", "test.cpp", "javascript"), []);
   assert.equal(parseTestCases("TEST(Suite, Works) {}", "fixture.txt", "googletest")[0].name, "Suite.Works");
+});
+
+test("fixture adapters own recognition, including empty fixtures and supporting files", () => {
+  assert.equal(analyzeTestFixture("// Empty test file", "empty.spec.ts", "javascript").isFixture, true);
+  assert.equal(analyzeTestFixture("// Shared support", "support.spec.ts", "googletest").isFixture, false);
+  assert.equal(analyzeTestFixture("TEST(Example, Works) {}", "declarations.txt", "googletest").isFixture, true);
+  assert.equal(analyzeTestFixture("// Shared support", "support.h", "googletest").isFixture, false);
+  assert.equal(analyzeTestFixture("// Unknown format", "empty.spec.txt").isFixture, false);
 });
 
 test("GoogleTest fixtures parse standard macros, nested bodies, comments and literal contents", () => {
@@ -69,10 +81,10 @@ test("GoogleTest targeting uses registered-name filters, never file arguments", 
 
 test("GoogleTest failures exclude summary counts and require a completed nonempty run", () => {
   const output = "[ RUN      ] Planet.Works\n[  FAILED  ] Planet.Works (2 ms)\n[==========] 1 test from 1 test suite ran. (2 ms total)\n[  FAILED  ] 1 test, listed below:\n[  FAILED  ] Planet.Works\n";
-  assert.deepEqual(googletestRunner.failures(output), ["Planet.Works"]);
-  assert.equal(googletestRunner.resultError?.(output), undefined);
-  assert.match(googletestRunner.resultError?.("[==========] Running 0 tests from 0 test suites.\n") ?? "", /no tests/);
-  assert.match(googletestRunner.resultError?.("[ RUN      ] Planet.Works\n") ?? "", /completed/);
+  assert.deepEqual(googletestRunner.parseResult(output).failures, ["Planet.Works"]);
+  assert.equal(googletestRunner.parseResult(output).error, undefined);
+  assert.match(googletestRunner.parseResult("[==========] Running 0 tests from 0 test suites.\n").error ?? "", /no tests/);
+  assert.match(googletestRunner.parseResult("[ RUN      ] Planet.Works\n").error ?? "", /completed/);
 });
 
 test("configuration rejects invalid formats and conflicting GoogleTest filters", () => {
@@ -87,6 +99,79 @@ test("configuration rejects invalid formats and conflicting GoogleTest filters",
   ]) {
     writeFileSync(join(repo, ".heptapod.json"), JSON.stringify(config));
     assert.throws(() => loadHeptapodConfig(repo), /Invalid .heptapod.json/);
+  }
+});
+
+test("Vitest interprets its failure sections and summaries, including recursive package output", () => {
+  const output = [
+    "stdout | arithmetic.test.ts > writes application logs",
+    "FAIL this is an application log, not a reported test failure",
+    "ERROR another application log",
+    "⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯",
+    " FAIL  arithmetic.test.ts > bounds > clamps values",
+    "AssertionError: expected 5 to be 4",
+    " Test Files  1 failed | 1 passed (2)",
+    "      Tests  1 failed | 3 passed (4)",
+  ].join("\n");
+  const expected = { failures: ["arithmetic.test.ts > bounds > clamps values"] };
+  assert.deepEqual(vitestRunner.parseResult(output), expected);
+  assert.deepEqual(vitestRunner.parseResult(output.split("\n").map((line) => `packages/example test: ${line}`).join("\n")), expected);
+  assert.deepEqual(vitestRunner.parseResult("FAIL an application message\nTest Files 1 passed (1)\nTests 3 passed (3)"), { failures: [] });
+  assert.match(vitestRunner.parseResult("No test files found, exiting with code 0").error ?? "", /no tests/);
+  assert.match(vitestRunner.parseResult("RUN v4.1.11\n").error ?? "", /completed/);
+  assert.match(vitestRunner.parseResult("Test Files 1 failed (1)\nTests 1 failed (1)").error ?? "", /failing/);
+  assert.match(vitestRunner.parseResult("Vitest caught 1 unhandled error during the test run.\nTest Files 1 passed (1)\nTests 1 passed (1)").error ?? "", /unhandled/);
+});
+
+test("plain commands and build logs do not invent observed test failures", () => {
+  const { repo, manifest, manifestPath, config } = googleTestRepository();
+  config.test.runner = { format: "command", command: [process.execPath, "-e", "console.log('FAIL application log\\nERROR diagnostic\\nnot ok 1 - TAP-like log\\n[  FAILED  ] Not.AGoogleTest');"] };
+  config.test.build = [{ command: [process.execPath, "-e", "console.log('FAIL build diagnostic');"] }];
+  writeFileSync(join(repo, ".heptapod.json"), JSON.stringify(config));
+  const analysis = analyzeNarrative(repo, manifest, manifestPath);
+  const execution = executeNarrativeTests(repo, manifest, manifestPath, () => {}, analysis.testAreasByStep);
+  const result = execution.runsByStep.get("fix")!;
+  assert.equal(result.status, "passing");
+  assert.equal(result.expectationMatched, true);
+  assert.deepEqual(result.observedFailures, []);
+  assert.deepEqual(result.unexpectedFailures, []);
+  assert.deepEqual(result.fixtureRuns[0].observedFailures, []);
+});
+
+test("execution delegates command validation and full-output parsing to a registered adapter", () => {
+  const { repo, manifest, manifestPath, config } = googleTestRepository();
+  const adapters: Record<string, TestRunnerAdapter> = runnerAdapters;
+  adapters.custom = {
+    ...commandRunner,
+    validateCommand(template) {
+      if (template.includes("invalid")) throw new Error("custom adapter rejected this command");
+    },
+    parseResult(output) {
+      return { failures: output.includes("RESULT red") ? ["Planet.Works"] : [] };
+    },
+  };
+  try {
+    config.test.runner = { format: "custom", command: ["invalid"] };
+    writeFileSync(join(repo, ".heptapod.json"), JSON.stringify(config));
+    assert.throws(() => loadHeptapodConfig(repo), /custom adapter rejected this command/);
+    config.test.runner.command = [process.execPath, "-e", "console.log('RESULT '+require('node:fs').readFileSync('state.txt','utf8'));console.log('x'.repeat(200005));"];
+    config.test.build = [{ command: [process.execPath, "-e", "console.log('FAIL build diagnostic');"] }];
+    writeFileSync(join(repo, ".heptapod.json"), JSON.stringify(config));
+    const analysis = analyzeNarrative(repo, manifest, manifestPath);
+    const execution = executeNarrativeTests(repo, manifest, manifestPath, () => {}, analysis.testAreasByStep);
+    const red = execution.runsByStep.get("tests")!;
+    assert.equal(red.exitCode, 0);
+    assert.equal(red.status, "failing");
+    assert.deepEqual(red.observedFailures, ["Planet.Works"]);
+    assert.equal(red.expectationMatched, true);
+    assert.equal(red.output.includes("RESULT red"), false);
+    assert.ok(red.output.length <= 200000);
+    const green = execution.runsByStep.get("fix")!;
+    assert.equal(green.status, "passing");
+    assert.equal(green.expectationMatched, true);
+    assert.deepEqual(green.observedFailures, []);
+  } finally {
+    delete adapters.custom;
   }
 });
 
@@ -121,6 +206,7 @@ function googleTestRepository() {
   const base = git("rev-parse", "HEAD");
   writeFileSync(join(repo, "test.cpp"), "TEST(Planet, Works) { EXPECT_TRUE(works()); }\n");
   writeFileSync(join(repo, "test-support.h"), "// Shared test setup\n");
+  writeFileSync(join(repo, "support.test.ts"), "// Supporting source with a JavaScript test filename\n");
   git("add", "."); git("commit", "-qm", "test");
   const middle = git("rev-parse", "HEAD");
   writeFileSync(join(repo, "state.txt"), "green");
@@ -141,7 +227,7 @@ function googleTestRepository() {
     schemaVersion: 1, title: "Fix planet behavior", summary: "Test the native runner", source: { base, head, diff: "source.diff" },
     steps: [
       { id: "tests", title: "Specify behavior", kind: "tests", diff: "tests.diff",
-        cases: [{ name: "Planet behavior", description: "Keeps planets stable", files: ["test.cpp", "test-support.h"] }],
+        cases: [{ name: "Planet behavior", description: "Keeps planets stable", files: ["test.cpp", "test-support.h", "support.test.ts"] }],
         checks: { automated: [{ label: "Planet.Works", basis: "expected", status: "failing" }], manual: [] } },
       { id: "fix", title: "Fix behavior", kind: "implementation", diff: "fix.diff",
         checks: { automated: [{ label: "Planet.Works", basis: "expected", status: "passing" }], manual: [] } },
@@ -158,6 +244,7 @@ test("native execution rebuilds each patched state, filters changed fixtures and
     { name: "Planet.Legacy", change: "removed" }, { name: "Planet.Works", change: "added" },
   ]);
   assert.equal(analysis.testAreasByStep.get("tests")?.[0].files[1].isFixture, false);
+  assert.equal(analysis.testAreasByStep.get("tests")?.[0].files[2].isFixture, false);
   const execution = executeNarrativeTests(repo, manifest, manifestPath, () => {}, analysis.testAreasByStep);
   assert.deepEqual(execution.runsByStep.get("tests")?.files, ["test.cpp"]);
   assert.equal(execution.runsByStep.get("tests")?.status, "failing");

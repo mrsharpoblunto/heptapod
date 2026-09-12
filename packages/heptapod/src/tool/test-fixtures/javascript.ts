@@ -113,4 +113,5 @@ function parseJavaScriptTestCases(source: string, path: string): ParsedTestCase[
 export const javascriptFixtures: TestFixtureAdapter = {
   supports: (path) => SUPPORTED_EXTENSIONS.has(extname(path).toLowerCase()),
   parse: parseJavaScriptTestCases,
+  isFixture: (path, cases) => cases.length > 0 || /(?:^|[./-])(?:test|spec)\.[cm]?[jt]sx?$/i.test(path),
 };

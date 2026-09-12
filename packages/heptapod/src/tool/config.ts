@@ -55,8 +55,10 @@ export function loadHeptapodConfig(repo: string): HeptapodConfig | null {
       if (format !== undefined && (typeof format !== "string" || !Object.hasOwn(runnerAdapters, format))) {
         throw new Error(`Invalid .heptapod.json: test.runner.format must be ${Object.keys(runnerAdapters).join(" or ")}.`);
       }
-      if (format === "googletest" && config.test.runner.command.some((part) => part === "{files}" || part.startsWith("--gtest_filter"))) {
-        throw new Error("Invalid .heptapod.json: the googletest runner supplies its own test filters; omit {files} and --gtest_filter.");
+      try {
+        runnerAdapters[format ?? "command"].validateCommand?.(config.test.runner.command);
+      } catch (error) {
+        throw new Error(`Invalid .heptapod.json: test.runner.command: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     if (config.test.fixtures !== undefined) {

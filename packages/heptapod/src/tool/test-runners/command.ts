@@ -1,20 +1,11 @@
-import { readFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
-import { testCommand, type TestRunnerAdapter } from "./types.js";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { testCommand, type TestCommand, type TestRunnerAdapter } from "./types.js";
 
-export function extractObservedFailures(output: string): string[] {
-  const failures = new Set<string>();
-  for (const rawLine of output.split("\n")) {
-    const line = rawLine.trim();
-    const match = line.match(/^(?:FAIL(?:ED)?|ERROR)\s+(.+)$/i)
-      ?? line.match(/^(?:×|✕|✖|✗)\s+(.+?)(?:\s+\d+(?:\.\d+)?m?s)?$/)
-      ?? line.match(/^not ok(?:\s+\d+)?\s*[-:]\s*(.+)$/i);
-    const failure = match?.[1]?.trim();
-    if (failure) failures.add(failure);
-    if (failures.size >= 100) break;
-  }
-  return [...failures];
-}
+const DEPENDENCY_FILES = new Set([
+  "package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock", "bun.lockb",
+  "Cargo.toml", "Cargo.lock", "go.mod", "go.sum",
+]);
 
 function packageHasTestScript(directory: string): boolean {
   try {
@@ -36,7 +27,55 @@ function owningPackage(worktree: string, file: string): string {
   return root;
 }
 
+function detectNodeCommand(worktree: string): { command: string[]; setup: TestCommand[] } | null {
+  const packagePath = join(worktree, "package.json");
+  if (!existsSync(packagePath)) return null;
+  let packageJson: { packageManager?: unknown; scripts?: Record<string, unknown> };
+  try {
+    packageJson = JSON.parse(readFileSync(packagePath, "utf8")) as typeof packageJson;
+  } catch {
+    return null;
+  }
+  if (typeof packageJson.scripts?.test !== "string" || packageJson.scripts.test.trim() === "") return null;
+  const declaredManager = typeof packageJson.packageManager === "string"
+    ? packageJson.packageManager.split("@")[0]
+    : null;
+  const manager = declaredManager
+    ?? (existsSync(join(worktree, "pnpm-lock.yaml")) ? "pnpm"
+      : existsSync(join(worktree, "yarn.lock")) ? "yarn"
+        : existsSync(join(worktree, "bun.lockb")) || existsSync(join(worktree, "bun.lock")) ? "bun"
+          : "npm");
+  const declaredVersion = typeof packageJson.packageManager === "string"
+    ? packageJson.packageManager.split("@")[1]
+    : null;
+  const install = manager === "pnpm" && existsSync(join(worktree, "pnpm-lock.yaml"))
+    ? { executable: "pnpm", args: ["install", "--frozen-lockfile"], display: "pnpm install --frozen-lockfile" }
+    : manager === "npm" && existsSync(join(worktree, "package-lock.json"))
+      ? { executable: "npm", args: ["ci"], display: "npm ci" }
+      : manager === "yarn" && existsSync(join(worktree, "yarn.lock"))
+        ? {
+          executable: "yarn",
+          args: ["install", declaredVersion?.startsWith("1.") ? "--frozen-lockfile" : "--immutable"],
+          display: `yarn install ${declaredVersion?.startsWith("1.") ? "--frozen-lockfile" : "--immutable"}`,
+        }
+        : manager === "bun" && (existsSync(join(worktree, "bun.lockb")) || existsSync(join(worktree, "bun.lock")))
+          ? { executable: "bun", args: ["install", "--frozen-lockfile"], display: "bun install --frozen-lockfile" }
+          : undefined;
+  return {
+    command: [manager, "test"],
+    setup: [install].filter((command): command is TestCommand => command !== undefined),
+  };
+}
+
 export const commandRunner: TestRunnerAdapter = {
+  detect(worktree) {
+    const node = detectNodeCommand(worktree);
+    if (node) return node;
+    if (existsSync(join(worktree, "Cargo.toml"))) return { command: ["cargo", "test"], setup: [], targeted: false };
+    if (existsSync(join(worktree, "go.mod"))) return { command: ["go", "test", "./..."], setup: [], targeted: false };
+    return null;
+  },
+  dependenciesChanged: (paths) => paths.some((path) => DEPENDENCY_FILES.has(basename(path))),
   fullCommand(template) {
     const argv = template.filter((part) => part !== "{files}");
     if (argv.at(-1) === "--") argv.pop();
@@ -50,5 +89,5 @@ export const commandRunner: TestRunnerAdapter = {
       : [...template, ...(template[0] === "npm" || template[0] === "bun" ? ["--"] : []), packageFile];
     return { file, command: testCommand(argv, cwd) };
   },
-  failures: extractObservedFailures,
+  parseResult: () => ({ failures: [] }),
 };

@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -7,8 +7,8 @@ import { loadHeptapodConfig, type HeptapodConfig } from "./config.js";
 import { type FixtureFormat } from "./test-fixtures/index.js";
 import { runnerAdapters } from "./test-runners/index.js";
 import { testCommand, type TestCommand, type TestRunnerAdapter } from "./test-runners/types.js";
-import { extractObservedFailures as commandFailures } from "./test-runners/command.js";
 import { readArtifact } from "./manifest.js";
+import { splitPatchFiles } from "./patch.js";
 import { run } from "./process.js";
 import type {
   ExpectedTestStatus,
@@ -38,74 +38,19 @@ const DEFAULT_TIMEOUT_MS = 15 * 60 * 1_000;
 const OUTPUT_LIMIT = 200_000;
 const ANSI_ESCAPE = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
 
-function configuredTestPlan(config: HeptapodConfig | null, inferred: TestPlan | null): TestPlan | null {
-  const runner = config?.test?.runner?.command;
-  if (!runner && !inferred) return null;
-  const template = runner ?? [inferred!.full.executable, ...inferred!.full.args];
+function detectTestPlan(worktree: string, config: HeptapodConfig | null): TestPlan | null {
   const adapter = runnerAdapters[config?.test?.runner?.format ?? "command"];
+  const inferred = adapter.detect?.(worktree);
+  const template = config?.test?.runner?.command ?? inferred?.command;
+  if (!template) return null;
   return {
     full: adapter.fullCommand(template),
     setup: config?.test?.prerequisites?.map(({ command }) => testCommand(command)) ?? inferred?.setup ?? [],
     build: config?.test?.build?.map(({ command }) => testCommand(command)) ?? [],
     adapter,
     fixtureFormat: config?.test?.fixtures?.format ?? "auto",
-    runnerTemplate: runner ?? inferred?.runnerTemplate,
+    runnerTemplate: config?.test?.runner?.command ?? (inferred?.targeted === false ? undefined : template),
   };
-}
-
-function detectNodeTestPlan(worktree: string): TestPlan | null {
-  const packagePath = join(worktree, "package.json");
-  if (!existsSync(packagePath)) return null;
-  let packageJson: { packageManager?: unknown; scripts?: Record<string, unknown> };
-  try {
-    packageJson = JSON.parse(readFileSync(packagePath, "utf8")) as typeof packageJson;
-  } catch {
-    return null;
-  }
-  if (typeof packageJson.scripts?.test !== "string" || packageJson.scripts.test.trim() === "") return null;
-  const declaredManager = typeof packageJson.packageManager === "string"
-    ? packageJson.packageManager.split("@")[0]
-    : null;
-  const manager = declaredManager
-    ?? (existsSync(join(worktree, "pnpm-lock.yaml")) ? "pnpm"
-      : existsSync(join(worktree, "yarn.lock")) ? "yarn"
-        : existsSync(join(worktree, "bun.lockb")) || existsSync(join(worktree, "bun.lock")) ? "bun"
-          : "npm");
-  const declaredVersion = typeof packageJson.packageManager === "string"
-    ? packageJson.packageManager.split("@")[1]
-    : null;
-  const install = manager === "pnpm" && existsSync(join(worktree, "pnpm-lock.yaml"))
-    ? { executable: "pnpm", args: ["install", "--frozen-lockfile"], display: "pnpm install --frozen-lockfile" }
-    : manager === "npm" && existsSync(join(worktree, "package-lock.json"))
-      ? { executable: "npm", args: ["ci"], display: "npm ci" }
-      : manager === "yarn" && existsSync(join(worktree, "yarn.lock"))
-        ? {
-          executable: "yarn",
-          args: ["install", declaredVersion?.startsWith("1.") ? "--frozen-lockfile" : "--immutable"],
-          display: `yarn install ${declaredVersion?.startsWith("1.") ? "--frozen-lockfile" : "--immutable"}`,
-        }
-        : manager === "bun" && (existsSync(join(worktree, "bun.lockb")) || existsSync(join(worktree, "bun.lock")))
-          ? { executable: "bun", args: ["install", "--frozen-lockfile"], display: "bun install --frozen-lockfile" }
-          : undefined;
-  return {
-    full: { executable: manager, args: ["test"], display: `${manager} test` },
-    setup: [install].filter((command): command is TestCommand => command !== undefined),
-    adapter: runnerAdapters.command,
-    build: [],
-    fixtureFormat: "auto",
-    runnerTemplate: [manager, "test"],
-  };
-}
-
-function detectTestPlan(worktree: string, config: HeptapodConfig | null): TestPlan | null {
-  let inferred = detectNodeTestPlan(worktree);
-  if (existsSync(join(worktree, "Cargo.toml"))) {
-    inferred ??= { full: { executable: "cargo", args: ["test"], display: "cargo test" }, setup: [], build: [], adapter: runnerAdapters.command, fixtureFormat: "auto" };
-  }
-  if (existsSync(join(worktree, "go.mod"))) {
-    inferred ??= { full: { executable: "go", args: ["test", "./..."], display: "go test ./..." }, setup: [], build: [], adapter: runnerAdapters.command, fixtureFormat: "auto" };
-  }
-  return configuredTestPlan(config, inferred);
 }
 
 function expectedStatus(step: NarrativeStep): ExpectedTestStatus {
@@ -117,10 +62,6 @@ function expectedStatus(step: NarrativeStep): ExpectedTestStatus {
 
 function normalizeFailure(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
-export function extractObservedFailures(output: string): string[] {
-  return commandFailures(output.replace(ANSI_ESCAPE, ""));
 }
 
 function buildStepTestRun(
@@ -135,7 +76,7 @@ function buildStepTestRun(
   const expectedFailures = step.checks.automated
     .filter((check) => check.status === "failing")
     .map((check) => check.label);
-  const observedFailures = result.observedFailures ?? extractObservedFailures(result.output);
+  const observedFailures = result.observedFailures ?? [];
   const normalizedExpected = expectedFailures.map(normalizeFailure).filter(Boolean);
   const unexpectedFailures = result.status === "failing" && expected === "failing"
     ? []
@@ -164,7 +105,7 @@ function buildStepTestRun(
     observedFailures,
     unexpectedFailures,
     fixtureRuns,
-    output: result.output,
+    output: result.output.slice(-OUTPUT_LIMIT),
     ...(result.detail ? { detail: result.detail } : {}),
   };
 }
@@ -185,7 +126,7 @@ function skippedRun(step: NarrativeStep, detail: string, files: string[] = [], o
     observedFailures: [],
     unexpectedFailures: [],
     fixtureRuns: [],
-    output,
+    output: output.slice(-OUTPUT_LIMIT),
     detail,
   };
 }
@@ -199,7 +140,7 @@ interface CommandResult {
   detail?: string;
 }
 
-function executeCommand(command: TestCommand, worktree: string, timeoutMs: number, repo: string, adapter?: TestRunnerAdapter): CommandResult {
+function executeCommand(command: TestCommand, worktree: string, timeoutMs: number, repo: string): CommandResult {
   const started = Date.now();
   const result = spawnSync(command.executable, command.args, {
     cwd: command.cwd ?? worktree,
@@ -211,14 +152,24 @@ function executeCommand(command: TestCommand, worktree: string, timeoutMs: numbe
   const output = `${result.stdout ?? ""}${result.stderr ? `${result.stdout ? "\n" : ""}${result.stderr}` : ""}`
     .replace(ANSI_ESCAPE, "");
   const timedOut = result.error && "code" in result.error && result.error.code === "ETIMEDOUT";
-  const resultError = result.status === 0 ? adapter?.resultError?.(output) : undefined;
   return {
-    observedFailures: adapter?.failures(output) ?? extractObservedFailures(output),
-    status: timedOut ? "timed-out" : result.status === 0 && !resultError ? "passing" : "failing",
+    status: timedOut ? "timed-out" : result.status === 0 ? "passing" : "failing",
     exitCode: result.status,
     durationMs: Date.now() - started,
-    output: output.slice(-OUTPUT_LIMIT),
-    ...(result.error ? { detail: result.error.message } : resultError ? { detail: resultError } : {}),
+    output,
+    ...(result.error ? { detail: result.error.message } : {}),
+  };
+}
+
+function executeTestCommand(command: TestCommand, worktree: string, timeoutMs: number, repo: string, adapter: TestRunnerAdapter): CommandResult {
+  const result = executeCommand(command, worktree, timeoutMs, repo);
+  const parsed = adapter.parseResult(result.output);
+  return {
+    ...result,
+    observedFailures: parsed.failures,
+    status: result.status === "passing" && (parsed.error || parsed.failures.length) ? "failing" : result.status,
+    detail: result.detail ?? parsed.error,
+    output: result.output.slice(-OUTPUT_LIMIT),
   };
 }
 
@@ -268,7 +219,7 @@ function skippedFixtureRun(file: string, step: NarrativeStep, detail: string, ou
     durationMs: run.durationMs,
     observedFailures: [],
     unexpectedFailures: [],
-    output,
+    output: run.output,
     detail,
   };
 }
@@ -278,12 +229,6 @@ function targetedCommands(worktree: string, plan: TestPlan, files: string[]) {
   if (!template) return [];
   return files.filter((file) => existsSync(resolve(worktree, file)))
     .map((file) => plan.adapter.target(worktree, template, file, plan.fixtureFormat));
-}
-
-function changesDependencies(step: NarrativeStep, manifestPath: string): boolean {
-  if (!step.diff) return false;
-  const patch = readArtifact(manifestPath, step.diff).toString("utf8");
-  return /^diff --git a\/(?:.+\/)?(?:package\.json|pnpm-lock\.yaml|package-lock\.json|yarn\.lock|bun\.lockb?|Cargo\.toml|Cargo\.lock|go\.mod|go\.sum) b\//m.test(patch);
 }
 
 function configuredTimeout(): number {
@@ -330,10 +275,11 @@ export function executeNarrativeTests(
 
     const changedTestFiles = new Set<string>();
     for (const [index, step] of manifest.steps.entries()) {
-      if (step.diff) {
+      const patch = step.diff ? readArtifact(manifestPath, step.diff) : null;
+      if (patch) {
         run("git", ["apply", "--index", "--binary", "--whitespace=nowarn", "--recount", "-"], {
           cwd: worktree,
-          input: readArtifact(manifestPath, step.diff),
+          input: patch,
         });
       }
       for (const area of testAreasByStep.get(step.id) ?? []) {
@@ -341,7 +287,7 @@ export function executeNarrativeTests(
           if (file.isFixture !== false) changedTestFiles.add(file.path);
         }
       }
-      if (plan.setup.length > 0 && changesDependencies(step, manifestPath)) {
+      if (plan.setup.length > 0 && patch && plan.adapter.dependenciesChanged?.(splitPatchFiles(patch.toString("utf8")).map((file) => file.path))) {
         onProgress(`Refreshing dependencies after step ${index + 1}/${manifest.steps.length}`);
         for (const setup of plan.setup) {
           setupFailure = executeCommand(setup, worktree, timeoutMs, repo);
@@ -388,13 +334,13 @@ export function executeNarrativeTests(
               continue;
             }
             onProgress(`Running test file after step ${index + 1}/${manifest.steps.length}: ${file}`);
-            const result = executeCommand(command, worktree, timeoutMs, repo, plan.adapter);
+            const result = executeTestCommand(command, worktree, timeoutMs, repo, plan.adapter);
             executedFixtures.push({ command, result });
             fixtureRuns.push(buildFixtureRun(file, command, result, step));
           }
           if (finalStep) {
             onProgress(`Running the full ${plan.full.display} suite after step ${index + 1}/${manifest.steps.length}: ${step.title}`);
-            const fullResult = executeCommand(plan.full, worktree, timeoutMs, repo, plan.adapter);
+            const fullResult = executeTestCommand(plan.full, worktree, timeoutMs, repo, plan.adapter);
             const result = combineCommandResults([...buildResults, { command: plan.full, result: fullResult }]);
             runsByStep.set(step.id, buildStepTestRun(result.command, result, step, "full-suite", files, fixtureRuns));
           } else if (executedFixtures.length === 0) {

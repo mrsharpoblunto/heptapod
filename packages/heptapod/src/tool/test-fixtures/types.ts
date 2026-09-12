@@ -12,4 +12,5 @@ export interface ParsedTestCase {
 export interface TestFixtureAdapter {
   supports(path: string): boolean;
   parse(source: string, path: string): ParsedTestCase[];
+  isFixture(path: string, cases: ParsedTestCase[]): boolean;
 }

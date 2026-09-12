@@ -14,10 +14,17 @@ export interface TargetedTestCommand {
 }
 
 export interface TestRunnerAdapter {
+  detect?(worktree: string): { command: string[]; setup: TestCommand[]; targeted?: boolean } | null;
+  dependenciesChanged?(paths: string[]): boolean;
+  validateCommand?(template: string[]): void;
   fullCommand(template: string[]): TestCommand;
   target(worktree: string, template: string[], file: string, format: FixtureFormat): TargetedTestCommand;
-  failures(output: string): string[];
-  resultError?(output: string): string | undefined;
+  parseResult(output: string): TestResult;
+}
+
+export interface TestResult {
+  failures: string[];
+  error?: string;
 }
 
 export function testCommand(argv: string[], cwd?: string): TestCommand {

@@ -10,8 +10,13 @@ export const fixtureAdapters = {
 export type FixtureFormat = "auto" | keyof typeof fixtureAdapters;
 
 export function parseTestCases(source: string, path: string, format: FixtureFormat = "auto"): ParsedTestCase[] {
+  return analyzeTestFixture(source, path, format).cases;
+}
+
+export function analyzeTestFixture(source: string, path: string, format: FixtureFormat = "auto"): { cases: ParsedTestCase[]; isFixture: boolean } {
   const adapter = format === "auto"
     ? Object.values(fixtureAdapters).find((candidate) => candidate.supports(path))
     : fixtureAdapters[format];
-  return adapter?.parse(source, path) ?? [];
+  const cases = adapter?.parse(source, path) ?? [];
+  return { cases, isFixture: adapter?.isFixture(path, cases) ?? false };
 }

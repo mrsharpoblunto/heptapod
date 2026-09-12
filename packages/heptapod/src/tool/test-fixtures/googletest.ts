@@ -27,6 +27,7 @@ function selectors(macro: string, suite: string, name: string): string[] {
 
 export const googletestFixtures: TestFixtureAdapter = {
   supports: (path) => EXTENSIONS.has(extname(path).toLowerCase()),
+  isFixture: (_path, cases) => cases.length > 0,
   parse(source) {
     const parsed: ParsedTestCase[] = [];
     const input = tokens(source);

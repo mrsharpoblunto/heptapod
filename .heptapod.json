@@ -8,7 +8,7 @@
       { "command": ["pnpm", "--dir", "packages/heptapod", "build"] }
     ],
     "runner": {
-      "format": "command",
+      "format": "vitest",
       "command": ["pnpm", "test", "{files}"]
     }
   }

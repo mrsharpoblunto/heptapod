@@ -21,7 +21,7 @@ Use an optional repository-root `.heptapod.json` for project-specific setup and 
       { "command": ["pnpm", "install", "--frozen-lockfile"] },
       { "command": ["pnpm", "run", "build:codegen"] }
     ],
-    "runner": { "command": ["pnpm", "test", "{files}"] }
+    "runner": { "format": "vitest", "command": ["pnpm", "test", "{files}"] }
   }
 }
 ```
@@ -45,15 +45,15 @@ For a compiled GoogleTest suite:
 }
 ```
 
-- `prerequisites` prepare the initial worktree and run again when package dependency manifests change.
+- `prerequisites` prepare the initial worktree and run again when the runner adapter identifies dependency changes.
 - `build` runs after a step's patch, once before that step's tests. A failed build is recorded and prevents execution of a stale binary. Later steps can build again.
-- `runner.format`: `command` passes fixture paths to the command, preserving `{files}` and Node package discovery. `googletest` runs from the worktree root, adds `--gtest_filter` for each fixture, and parses GoogleTest failures. The final suite uses `--gtest_filter=*`. Empty or incomplete GoogleTest runs cannot pass.
+- `runner.format`: `command` passes fixture paths to the command, preserving `{files}` and Node package discovery. It uses the process exit status without interpreting log text. `vitest` adds Vitest console-result parsing, including named failures and empty or incomplete runs; use a console reporter such as `default` or `verbose`. `googletest` runs from the worktree root, adds `--gtest_filter` for each fixture, and parses GoogleTest failures. The final suite uses `--gtest_filter=*`. Empty or incomplete GoogleTest runs cannot pass.
 - `fixtures.format`: `auto`, `javascript`, or `googletest`. The GoogleTest parser recognizes `TEST`, `TEST_F`, `TEST_P`, `TYPED_TEST`, and `TYPED_TEST_P`, including parameterized filter names. It reads standard macros from source; it does not expand custom macros or evaluate conditional compilation. Fixtures without recognized selectors are reported as not run.
 - `worktreeDirectory` optionally places temporary worktrees below a path relative to the reviewed repository (or an absolute path). For Windows tools from WSL, use a directory on a Windows drive, such as `.worktrees`. Keep this directory ignored by Git.
 
 Commands are argv arrays and run without an implicit shell. Use an explicit `bash -c` or another shell when needed. Each command receives `HEPTAPOD_REPOSITORY` (the original checkout) and `HEPTAPOD_WORKTREE` (the reconstructed checkout) for repository-specific setup. GoogleTest commands must not contain `{files}` or `--gtest_filter`; the adapter supplies the filter.
 
-Fixture adapters in `src/tool/test-fixtures` own parsing, source locations, fingerprints, and optional test selectors. Runner adapters in `src/tool/test-runners` own command selection and result interpretation. Add an adapter to the corresponding registry to make another format selectable without changing narrative analysis or worktree execution.
+Fixture adapters in `src/tool/test-fixtures` own file recognition (`supports` and `isFixture`), parsing, source locations, fingerprints, and optional test selectors. Filename conventions belong to the selected fixture format: a JavaScript-style test filename alone does not make a GoogleTest support file runnable. Runner adapters in `src/tool/test-runners` own project discovery, dependency-refresh rules, command validation and selection, and output interpretation through `parseResult`. Shared execution handles processes and exit status, then delegates test output to the selected adapter before truncating stored logs. Prerequisite and build output is never parsed as test results. Add an adapter to the corresponding registry to make another format selectable without changing configuration validation, narrative analysis, or worktree execution.
 
 When this package is locally linked from a source checkout, the `heptapod` binary automatically runs `src/tool/cli.ts` through `tsx`. Re-run the command after a source edit; rebuilding `dist` is unnecessary.
 

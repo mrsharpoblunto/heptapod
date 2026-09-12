@@ -1,5 +1,5 @@
 import { loadHeptapodConfig } from "./config.js";
-import { parseTestCases, type FixtureFormat } from "./test-fixtures/index.js";
+import { analyzeTestFixture, type FixtureFormat } from "./test-fixtures/index.js";
 import type { ParsedTestCase } from "./test-fixtures/types.js";
 
 export { parseTestCases } from "./test-fixtures/index.js";
@@ -75,12 +75,12 @@ function analyzeTestStep(
     name: area.name,
     description: area.description,
     files: area.files.map((path) => {
-      const before = parseTestCases(readTreeFile(repo, beforeTree, path) ?? "", path, format);
-      const after = parseTestCases(readTreeFile(repo, afterTree, path) ?? "", path, format);
+      const before = analyzeTestFixture(readTreeFile(repo, beforeTree, path) ?? "", path, format);
+      const after = analyzeTestFixture(readTreeFile(repo, afterTree, path) ?? "", path, format);
       return {
         path,
-        isFixture: before.length > 0 || after.length > 0 || /(?:^|[./-])(?:test|spec)\.[cm]?[jt]sx?$/i.test(path),
-        cases: compareTestCases(before, after),
+        isFixture: before.isFixture || after.isFixture,
+        cases: compareTestCases(before.cases, after.cases),
       };
     }),
   }));
