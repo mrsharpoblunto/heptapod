@@ -1,0 +1,14 @@
+{
+  "name": "heptapod",
+  "owner": {
+    "name": "Glenn Conner"
+  },
+  "plugins": [
+    {
+      "name": "heptapod",
+      "source": "./packages/heptapod-skill",
+      "description": "Turn large diffs into verified narrative reviews.",
+      "version": "0.1.0"
+    }
+  ]
+}

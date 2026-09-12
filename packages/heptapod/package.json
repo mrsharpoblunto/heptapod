@@ -1,0 +1,70 @@
+{
+  "name": "@thestraylight/heptapod",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "description": "Build and validate narrative walkthroughs from large Git diffs.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mrsharpoblunto/heptapod.git",
+    "directory": "packages/heptapod"
+  },
+  "homepage": "https://github.com/mrsharpoblunto/heptapod#readme",
+  "bugs": "https://github.com/mrsharpoblunto/heptapod/issues",
+  "keywords": ["code-review", "diff", "github", "ai-agent"],
+  "bin": {
+    "heptapod": "scripts/heptapod.mjs"
+  },
+  "files": [
+    "dist",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/tool/index.d.ts",
+      "import": "./dist/tool/index.js"
+    },
+    "./database": {
+      "types": "./dist/tool/database.d.ts",
+      "import": "./dist/tool/database.js"
+    },
+    "./cache": {
+      "types": "./dist/tool/cache.d.ts",
+      "import": "./dist/tool/cache.js"
+    },
+    "./types": {
+      "types": "./dist/tool/types.d.ts",
+      "import": "./dist/tool/types.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "tsx src/tool/cli.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "pnpm run build && vitest run",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run test",
+    "prepack": "pnpm run build"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@swc/core": "^1.16.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "^24.10.0",
+    "eslint": "9.39.5",
+    "globals": "^17.6.0",
+    "tsx": "^4.23.13",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.61.0",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "heptapod",
+  "version": "0.1.0",
+  "description": "Turn large diffs into verified narrative reviews.",
+  "author": {
+    "name": "Glenn Conner"
+  },
+  "repository": "https://github.com/mrsharpoblunto/heptapod",
+  "license": "MIT",
+  "keywords": ["code-review", "diff", "pull-request"]
+}

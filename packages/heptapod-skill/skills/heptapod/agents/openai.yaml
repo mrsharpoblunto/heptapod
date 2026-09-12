@@ -1,0 +1,4 @@
+interface:
+  display_name: "Heptapod"
+  short_description: "Turn large diffs into verified narrative steps"
+  default_prompt: "Use $heptapod to turn this branch or PR diff into a verified narrative review."

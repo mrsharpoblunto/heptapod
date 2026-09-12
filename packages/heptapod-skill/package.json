@@ -1,0 +1,30 @@
+{
+  "name": "@thestraylight/heptapod-skill",
+  "version": "0.1.0",
+  "description": "Heptapod narrative code-review skill for Codex and Claude Code.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "heptapod-skill": "scripts/heptapod-skill.mjs"
+  },
+  "files": [
+    ".claude-plugin",
+    "skills",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mrsharpoblunto/heptapod.git",
+    "directory": "packages/heptapod-skill"
+  },
+  "homepage": "https://github.com/mrsharpoblunto/heptapod#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "check": "node scripts/validate.mjs && node --test test/*.test.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}
