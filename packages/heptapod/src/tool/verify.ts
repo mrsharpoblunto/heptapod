@@ -1,5 +1,4 @@
-import { assertStepFileCoverage } from "./file-coverage.js";
-import { readArtifact } from "./manifest.js";
+import { assertNarrativeFileCoverage, readArtifact, resolveGeneratedFiles } from "./manifest.js";
 import {
   applyPatchToIndex,
   canonicalDiff,
@@ -9,7 +8,6 @@ import {
   stagedTree,
   withTemporaryIndex,
 } from "./git.js";
-import { splitPatchFiles } from "./patch.js";
 import type { NarrativeManifest, NarrativeStep, VerificationResult } from "./types.js";
 
 function firstDifference(expected: Buffer, actual: Buffer) {
@@ -34,7 +32,9 @@ export function verifyNarrative(
   repo: string,
   manifest: NarrativeManifest,
   manifestPath: string,
+  generated: ReadonlySet<string> = resolveGeneratedFiles(repo, manifest, manifestPath),
 ): VerificationResult {
+  assertNarrativeFileCoverage(manifest, manifestPath, generated);
   const base = resolveCommit(repo, manifest.source.base);
   const head = resolveCommit(repo, manifest.source.head);
   if (base !== manifest.source.base || head !== manifest.source.head) {
@@ -58,7 +58,6 @@ export function verifyNarrative(
     for (const [index, step] of patchSteps.entries()) {
       const patch = readArtifact(manifestPath, step.diff);
       if (patch.length === 0) throw new Error(`Step patch ${step.diff} is empty.`);
-      assertStepFileCoverage(step, splitPatchFiles(patch.toString("utf8")));
       applyPatchToIndex(repo, env, patch, `${index + 1} (${step.id})`);
     }
 
@@ -80,6 +79,7 @@ export function verifyNarrative(
       sourceBytes: source.length,
       patchSteps: patchSteps.length,
       exact: true,
+      generatedFiles: [...generated].sort(),
     };
   });
 }

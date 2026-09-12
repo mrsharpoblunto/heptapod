@@ -4,7 +4,7 @@ import type { ParsedTestCase } from "./test-fixtures/types.js";
 
 export { parseTestCases } from "./test-fixtures/index.js";
 import { applyPatchToIndex, stagedTree, withTemporaryIndex } from "./git.js";
-import { readArtifact } from "./manifest.js";
+import { readArtifact, readStepMarkdown, resolveGeneratedFiles } from "./manifest.js";
 import { extractRepositoryFileReferences } from "./markdown-references.js";
 import { splitPatchFiles } from "./patch.js";
 import { run } from "./process.js";
@@ -96,6 +96,7 @@ export function analyzeNarrative(
   repo: string,
   manifest: NarrativeManifest,
   manifestPath: string,
+  generated: ReadonlySet<string> = resolveGeneratedFiles(repo, manifest, manifestPath),
 ): NarrativeAnalysis {
   const format = loadHeptapodConfig(repo)?.test?.fixtures?.format ?? "auto";
   return withTemporaryIndex(repo, manifest.source.base, ({ env }) => {
@@ -108,7 +109,7 @@ export function analyzeNarrative(
       if (patch) applyPatchToIndex(repo, env, patch, `${index + 1} (${step.id})`);
       const afterTree = stagedTree(repo, env);
       if (patch) {
-        filesByStep.set(step.id, new Map(splitPatchFiles(patch.toString("utf8")).map((file) => [
+        filesByStep.set(step.id, new Map(splitPatchFiles(patch.toString("utf8")).filter((file) => !generated.has(file.path)).map((file) => [
           file.path,
           {
             beforeContent: readTreeFile(repo, beforeTree, file.path),
@@ -116,13 +117,11 @@ export function analyzeNarrative(
           },
         ])));
       }
-      const markdown = [
-        step.body ? readArtifact(manifestPath, step.body).toString("utf8") : "",
-        ...(step.sections ?? []).map((section) => section.description),
-      ].join("\n\n");
+      const markdown = readStepMarkdown(step, manifestPath);
       if (markdown) {
         const references = new Map<string, FileSnapshot>();
         for (const path of extractRepositoryFileReferences(markdown)) {
+          if (generated.has(path)) continue;
           const content = readTreeFile(repo, afterTree, path);
           if (content !== null) references.set(path, { beforeContent: content, afterContent: content });
         }

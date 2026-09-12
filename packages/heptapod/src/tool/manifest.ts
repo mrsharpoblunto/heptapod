@@ -1,12 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, extname, relative, resolve } from "node:path";
-import { assertStepFileCoverage } from "./file-coverage.js";
+import { assertStepFileCoverage, stepFileReferences } from "./file-coverage.js";
+import { generatedFiles } from "./generated-files.js";
+import { extractRepositoryFileReferences } from "./markdown-references.js";
 import { splitPatchFiles } from "./patch.js";
 import type {
   Callsite,
   Evidence,
   InterfaceChange,
   NarrativeManifest,
+  NarrativeStep,
   StepChecks,
   TestCase,
 } from "./types.js";
@@ -87,9 +90,10 @@ function validateFileReferences(
   }
 }
 
-export function loadManifest(manifestPath: string): {
+export function loadManifest(manifestPath: string, repo?: string): {
   manifest: NarrativeManifest;
   manifestPath: string;
+  generated: Set<string>;
 } {
   const absolutePath = resolve(manifestPath);
   let manifest: NarrativeManifest;
@@ -148,7 +152,6 @@ export function loadManifest(manifestPath: string): {
     if (step.kind === "tests") {
       assert(step.cases, `${label}.cases is required`);
       validateFileReferences(step.cases, `${label}.cases`);
-      assert(step.cases.length > 0, `${label}.cases must describe at least one test case`);
       step.cases.forEach((testCase, caseIndex) => {
         nonEmptyString(testCase.description, `${label}.cases[${caseIndex}].description`);
         assert(Array.isArray(testCase.files) && testCase.files.length > 0, `${label}.cases[${caseIndex}].files must link at least one changed file`);
@@ -158,7 +161,6 @@ export function loadManifest(manifestPath: string): {
       assert(step.interfaces, `${label}.interfaces is required`);
       assert(!("callsites" in step), `${label}.callsites must be nested under each interface`);
       validateFileReferences(step.interfaces, `${label}.interfaces`);
-      assert(step.interfaces.length > 0, `${label}.interfaces must not be empty`);
       let callsiteCount = 0;
       step.interfaces.forEach((item, interfaceIndex) => {
         const interfaceLabel = `${label}.interfaces[${interfaceIndex}]`;
@@ -167,11 +169,11 @@ export function loadManifest(manifestPath: string): {
         item.callsites.forEach((callsite, callsiteIndex) => nonEmptyString(callsite.file, `${interfaceLabel}.callsites[${callsiteIndex}].file`));
         callsiteCount += item.callsites.length;
       });
-      assert(callsiteCount > 0, `${label}.interfaces must contain at least one callsite`);
+      assert(step.interfaces.length === 0 || callsiteCount > 0, `${label}.interfaces must contain at least one callsite`);
     }
     if (step.kind === "implementation") {
       assert(!("focus" in step), `${label}.focus is no longer supported; use Critical/Secondary sections covering every changed file`);
-      assert(Array.isArray(step.sections) && step.sections.length > 0, `${label}.sections must be a non-empty array`);
+      assert(Array.isArray(step.sections), `${label}.sections must be an array`);
       step.sections.forEach((section, sectionIndex) => {
         const sectionLabel = `${label}.sections[${sectionIndex}]`;
         assert(section && typeof section === "object", `${sectionLabel} must be an object`);
@@ -186,12 +188,42 @@ export function loadManifest(manifestPath: string): {
         });
       });
     }
-    if (step.diff) assertStepFileCoverage(step, splitPatchFiles(readArtifact(absolutePath, step.diff).toString("utf8")));
   }
 
-  return { manifest, manifestPath: absolutePath };
+  const generated = repo ? resolveGeneratedFiles(repo, manifest, absolutePath) : new Set<string>();
+  assertNarrativeFileCoverage(manifest, absolutePath, generated);
+  return { manifest, manifestPath: absolutePath, generated };
 }
 
 export function readArtifact(manifestPath: string, artifactPath: string): Buffer {
   return readFileSync(resolveArtifactPath(manifestPath, artifactPath, artifactPath));
+}
+
+export function readStepMarkdown(step: NarrativeStep, manifestPath: string): string {
+  return [
+    step.body ? readArtifact(manifestPath, step.body).toString("utf8") : "",
+    ...(step.sections ?? []).map((section) => section.description),
+    ...(step.cases ?? []).map((area) => area.description),
+    ...(step.interfaces ?? []).flatMap((item) => [item.description, item.before, item.after]),
+  ].filter(Boolean).join("\n\n");
+}
+
+/** Use the target repository's current rules, even when reviewing older commits. */
+export function resolveGeneratedFiles(repo: string, manifest: NarrativeManifest, manifestPath: string): Set<string> {
+  const paths = manifest.source.files?.map((file) => file.path) ?? [];
+  for (const step of manifest.steps) {
+    if (step.diff) paths.push(...splitPatchFiles(readArtifact(manifestPath, step.diff).toString("utf8")).map((file) => file.path));
+    paths.push(...stepFileReferences(step).map((file) => file.path));
+    paths.push(...extractRepositoryFileReferences(readStepMarkdown(step, manifestPath)));
+  }
+  return generatedFiles(repo, paths);
+}
+
+export function assertNarrativeFileCoverage(manifest: NarrativeManifest, manifestPath: string, generated: ReadonlySet<string>): void {
+  for (const step of manifest.steps) {
+    if (step.diff) assertStepFileCoverage(step, splitPatchFiles(readArtifact(manifestPath, step.diff).toString("utf8")), generated);
+    for (const path of extractRepositoryFileReferences(readStepMarkdown(step, manifestPath))) {
+      assert(!generated.has(path), `step ${step.id} links to ${path}, which is excluded from review by the linguist-generated Git attribute. Remove the file link.`);
+    }
+  }
 }

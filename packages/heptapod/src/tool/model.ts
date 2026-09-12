@@ -1,9 +1,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, extname, relative, resolve } from "node:path";
-import { assertStepFileCoverage } from "./file-coverage.js";
 import { patchStats, splitPatchFiles } from "./patch.js";
 import { rewriteRepositoryFileLinks } from "./markdown-references.js";
-import { readArtifact, resolveArtifactPath } from "./manifest.js";
+import { assertNarrativeFileCoverage, readArtifact, resolveArtifactPath } from "./manifest.js";
 import type {
   Callsite,
   NarrativeManifest,
@@ -52,13 +51,16 @@ export function buildReviewModel(
   manualEvidence: Evidence[] = [],
   testExecution?: NarrativeTestExecution,
 ): RenderModel {
-  const sourcePatch = readArtifact(manifestPath, manifest.source.diff).toString("utf8");
+  const generated = new Set(verification.generatedFiles ?? []);
+  assertNarrativeFileCoverage(manifest, manifestPath, generated);
+  const visiblePatch = (patch: string) => splitPatchFiles(patch).filter((file) => !generated.has(file.path)).map((file) => file.patch).join("");
+  const sourcePatch = visiblePatch(readArtifact(manifestPath, manifest.source.diff).toString("utf8"));
   const steps = manifest.steps.map((step, index) => {
-    const referenceSnapshots = referenceFilesByStep.get(step.id) ?? new Map<string, FileSnapshot>();
+    const referenceSnapshots = new Map([...(referenceFilesByStep.get(step.id) ?? new Map<string, FileSnapshot>())].filter(([path]) => !generated.has(path)));
     const body = step.body
       ? inlineMarkdownImages(readArtifact(manifestPath, step.body).toString("utf8"), step.body, manifestPath)
       : "";
-    const patch = step.diff ? readArtifact(manifestPath, step.diff).toString("utf8") : "";
+    const patch = step.diff ? visiblePatch(readArtifact(manifestPath, step.diff).toString("utf8")) : "";
     const fileDiffs = patch ? splitPatchFiles(patch).map((file) => ({
       ...file,
       ...filesByStep.get(step.id)?.get(file.path),
@@ -92,7 +94,6 @@ export function buildReviewModel(
         patch: snapshot.afterContent === null ? "" : snapshotPatch(snapshot.afterContent),
         ...snapshot,
       }));
-    if (patch) assertStepFileCoverage(step, fileDiffs);
     const explicitEvidenceUrls = new Set([
       ...(step.evidence ?? []).map((item) => item.url),
       ...step.checks.automated.flatMap((check) => check.evidence ?? []).map((item) => item.url),
@@ -119,7 +120,7 @@ export function buildReviewModel(
   return {
     title: manifest.title,
     summary: manifest.summary,
-    source: { ...manifest.source, stats: patchStats(sourcePatch) },
+    source: { ...manifest.source, files: manifest.source.files?.filter((file) => !generated.has(file.path)), stats: patchStats(sourcePatch) },
     verification,
     testExecution: testExecution?.metadata,
     steps,

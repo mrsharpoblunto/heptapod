@@ -306,15 +306,16 @@
   .diff-del.diff-target { background: var(--diff-delete-highlight); }
 
   .detail-panel { @apply grid grid-rows-[44px_minmax(0,1fr)] overflow-hidden bg-[var(--canvas-subtle)]; }
-  .detail-header { @apply flex min-w-0 items-stretch gap-0 bg-[var(--canvas-subtle)]; }
+  .detail-header { @apply relative flex min-w-0 items-stretch gap-0 bg-[var(--canvas-subtle)]; }
   .detail-panel-content { @apply min-h-0 overflow-auto bg-[var(--canvas)] px-4.5 py-5 pb-10; }
   .detail-toggle {
-    @apply ml-auto h-full w-11 shrink-0 rounded-none border-0 bg-transparent shadow-none;
-    box-shadow: inset 0 -1px 0 var(--border);
+    @apply absolute top-0 right-0 z-10 h-11 w-11 rounded-none border-0 bg-transparent shadow-none;
+    background: linear-gradient(to right, transparent, var(--canvas-subtle) 80%);
   }
   .detail-toggle:hover { @apply bg-transparent text-[var(--fg)]; }
-  .detail-toggle-floating { @apply fixed top-[76px] right-0 z-40 h-11 w-11 rounded-bl-md border-[var(--border)] shadow-md; }
-  .detail-tabs { @apply flex min-w-0 flex-1 items-stretch gap-0 overflow-x-auto; scrollbar-width: none; }
+  .detail-toggle-floating { @apply fixed top-[76px] right-0 z-40 h-11 w-11 border-0 bg-transparent shadow-none; }
+  .detail-toggle-floating:hover { @apply bg-transparent text-[var(--fg)]; }
+  .detail-tabs { @apply flex min-w-0 flex-1 items-stretch gap-0 overflow-x-auto pr-11; scrollbar-width: none; }
   .detail-tabs::-webkit-scrollbar { display: none; }
   .detail-tabs::after {
     content: "";

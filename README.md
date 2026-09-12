@@ -100,6 +100,19 @@ claude plugin install heptapod@heptapod
 
 ### Complete step coverage
 
-Every test, implementation, and refactor step must include every file from its diff in its structured content. Tests use `cases[].files`, refactors use interface sources and nested callsites, and implementations use `sections[].files`. Validation and ingestion reject omitted or unrelated files.
+Every test, implementation, and refactor step must include every non-generated file from its diff in its structured content. Tests use `cases[].files`, refactors use interface sources and nested callsites, and implementations use `sections[].files`. Validation and ingestion reject omitted or unrelated files.
 
 Implementation sections require a name, Markdown description, `critical` or `secondary` priority, and labeled files. Critical diffs open inline; Secondary files use a compact description/file/status list. Each implementation file belongs to exactly one section. Existing manifests using `focus` must be migrated to sections before ingestion.
+
+### Generated files
+
+Heptapod uses GitHub's `linguist-generated` Git attribute to hide generated files from review content, file lists, and diff statistics. For example, add these rules to the target repository's `.gitattributes`:
+
+```gitattributes
+*.generated linguist-generated=true
+*.generated.* linguist-generated=true
+```
+
+Git resolves the patterns, nested `.gitattributes`, and overrides such as `-linguist-generated` or `linguist-generated=false`. Heptapod uses the target repository's current attributes, including local edits, even for older pinned comparisons. Re-ingest existing reviews after changing the rules. GitHub applies committed rules to hide generated diffs by default. `linguist-vendored` and `.gitignore` do not hide tracked review files.
+
+Keep generated changes in `source.diff` and their owning step patches: exact reconstruction and builds still include them. Omit them from test/supporting file lists, Critical/Secondary sections, interface sources, callsites, and repository file links in Markdown. Validation and ingestion reject explicit references to excluded files. Coverage still requires every visible changed file; a step containing only generated changes uses an empty `cases`, `sections`, or `interfaces` array.

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,6 +18,7 @@ const patch = [
 
 function fixture(kind: "tests" | "implementation" | "refactor") {
   const root = mkdtempSync(join(tmpdir(), "heptapod-file-coverage-"));
+  execFileSync("git", ["init", "-q"], { cwd: root });
   writeFileSync(join(root, "step.diff"), patch);
   writeFileSync(join(root, "context.md"), "Context");
   const step: NarrativeStep = { id: "change", title: "Change behavior", kind, diff: "step.diff", checks: { automated: [], manual: [] } };
@@ -45,7 +47,7 @@ for (const kind of ["tests", "implementation", "refactor"] as const) {
     assert.throws(() => loadManifest(manifestPath), error);
     assert.throws(() => buildReviewModel(manifest, manifestPath, verification), error);
     const databasePath = join(root, "reviews.sqlite");
-    // Rejection must happen before attempting Git, test execution, or storing a review.
+    // Rejection must happen before reconstructing commits, executing tests, or storing a review.
     assert.throws(() => ingestNarrative({ id: "1", repo: root, narrativePath: manifestPath, databasePath }), error);
     assert.equal(getReview("1", databasePath), null);
   });

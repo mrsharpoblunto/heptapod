@@ -107,7 +107,7 @@ The first step must be a description. A manual step's Markdown should include pr
 
 Keep the overall test summary and explanatory prose about the changeset's behavior, coverage, results, and limitations. Do not discuss Heptapod, repeated execution, ingestion, or validation requirements.
 
-The `cases` entries describe broad test areas, not individual `it()`/`test()` names. Explain the functionality and risk covered without restating the literal cases; Heptapod parses those names and their added/removed/changed status from the before/after source using the configured fixture parser. Each area must link to at least one file changed by the step patch. Together, the areas must cover every changed file, including helpers, fixtures, and project setup. Explain supporting files in the relevant area even when they contain no named test cases:
+The `cases` entries describe broad test areas, not individual `it()`/`test()` names. Explain the functionality and risk covered without restating the literal cases; Heptapod parses those names and their added/removed/changed status from the before/after source using the configured fixture parser. Each area must link to at least one file changed by the step patch. Together, the areas must cover every non-generated changed file, including helpers, fixtures, and project setup. Explain supporting files in the relevant area even when they contain no named test cases:
 
 ```json
 {
@@ -130,7 +130,7 @@ The `cases` entries describe broad test areas, not individual `it()`/`test()` na
 
 ## Refactor steps
 
-Describe the changed interface separately from every updated callsite. Interface sources and nested callsites together must cover every file in this step's patch. Each reference must be a path in that patch.
+Describe the changed interface separately from every updated callsite. Interface sources and nested callsites together must cover every non-generated file in this step's patch. Each reference must be a path in that patch.
 
 ```json
 {
@@ -156,13 +156,13 @@ Describe the changed interface separately from every updated callsite. Interface
 }
 ```
 
-`before`, `after`, and interface `file` are optional. `before` and `after` contain Markdown: use normal prose, inline code, fenced code with an explicit language, or both. Do not assume the viewer treats the whole value as source code. Use `file` as the source only when a specific API or implementation file triggers that section's caller migrations. Omit it for a distributed set of small migrations with no single source; the viewer then omits the Source group. `interfaces` must be non-empty, every interface requires a `callsites` array, and the step must contain at least one callsite across its interface sections. Step-level `callsites` are invalid. `callsites[].change` is optional and may be `added`, `removed`, or `changed`; when omitted, Heptapod infers it from whether the containing file was added, deleted, or modified.
+`before`, `after`, and interface `file` are optional. `before` and `after` contain Markdown: use normal prose, inline code, fenced code with an explicit language, or both. Do not assume the viewer treats the whole value as source code. Use `file` as the source only when a specific API or implementation file triggers that section's caller migrations. Omit it for a distributed set of small migrations with no single source; the viewer then omits the Source group. `interfaces` must be non-empty unless the entire patch is generated; every interface requires a `callsites` array, and the step must contain at least one callsite across its interface sections. Step-level `callsites` are invalid. `callsites[].change` is optional and may be `added`, `removed`, or `changed`; when omitted, Heptapod infers it from whether the containing file was added, deleted, or modified.
 
 ## Implementation steps
 
 `sections` replaces `focus`. Every section requires a non-empty `name`, `description` (inline Markdown), `priority` (`critical` or `secondary`), and `files` list. Each file requires a descriptive `label` and repository-relative `file`; optional `change` uses the same added/removed/changed values as refactor callsites. Relative images in section Markdown resolve beside the step's body file, or beside the manifest when no body is present.
 
-Critical sections show a Critical badge and every file's inline diff open by default. Secondary sections use the same description/file/status list as refactor callsites, with diffs opened on selection. Explain why each group needs its priority. Every changed file must appear **exactly once** across the sections. Unknown, omitted, and duplicate files are rejected; legacy `focus` manifests must be migrated. Prefer a few cohesive sections and split independent changes into separate steps.
+Critical sections show a Critical badge and every file's inline diff open by default. Secondary sections use the same description/file/status list as refactor callsites, with diffs opened on selection. Explain why each group needs its priority. Every non-generated changed file must appear **exactly once** across the sections. Unknown, omitted, and duplicate files are rejected; legacy `focus` manifests must be migrated. Prefer a few cohesive sections and split independent changes into separate steps.
 
 ```json
 {
@@ -189,12 +189,18 @@ Critical sections show a Critical badge and every file's inline diff open by def
 }
 ```
 
+## Generated file exclusions
+
+The target repository's current Git attributes define review visibility. `linguist-generated` (or a value other than `false`) excludes a file; `-linguist-generated`, `linguist-generated=false`, and unspecified attributes leave it visible. Git resolves nested rules and overrides. `.gitignore` and `linguist-vendored` do not exclude tracked review files.
+
+Generated changes remain in `source.diff` and the sequential step patches for exact reconstruction and builds. They are omitted from rendered diffs, sidebar files, and diff statistics. Explicit references in `cases[].files`, `sections[].files[].file`, interface sources, callsites, or repository file links in Markdown are invalid. An all-generated patch uses an empty `cases`, `sections`, or `interfaces` array; visible changes still require complete structured coverage. Re-ingest after editing attributes to refresh the stored review.
+
 ## Patch rules
 
 - Use Git unified patches, including `diff --git` headers. Preserve binary patch data when present.
 - Each patch is relative to the cumulative state after prior patch-bearing steps, not necessarily directly to the base.
 - Description and manual steps do not affect patch order.
-- Every file in a test, implementation, or refactor diff must be covered by `cases[].files`, `sections[].files[].file`, or `interfaces[].file` plus `interfaces[].callsites[].file`, respectively. All references must occur in that step patch. Validation and ingestion fail with the missing paths if coverage is incomplete.
+- Every non-generated file in a test, implementation, or refactor diff must be covered by `cases[].files`, `sections[].files[].file`, or `interfaces[].file` plus `interfaces[].callsites[].file`, respectively. All references must occur in that step patch. Validation and ingestion fail with the missing paths if coverage is incomplete.
 - Implementation sections partition the files exactly once. A file may serve multiple test areas or interfaces when relevant. For renames, reference the destination path; for deletions, reference the deleted path.
 - It is acceptable for intermediate content to be absent from the final tree, but avoid invented churn that does not improve the explanation.
 - Do not edit `source.diff` to make validation pass. Repair the step patches or narrative decomposition.

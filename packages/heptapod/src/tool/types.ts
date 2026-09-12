@@ -133,6 +133,8 @@ export interface VerificationResult {
   sourceBytes: number;
   patchSteps: number;
   exact: true;
+  /** Snapshot of the Git attribute exclusions used to validate and render this review. */
+  generatedFiles?: string[];
 }
 
 export type ObservedTestStatus = "passing" | "failing" | "timed-out" | "not-run";
