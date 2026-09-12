@@ -36,6 +36,7 @@ export interface ParsedTestCaseChange {
 
 export interface TestFileChange {
   path: string;
+  isFixture?: boolean;
   cases: ParsedTestCaseChange[];
 }
 
@@ -72,6 +73,13 @@ export interface Callsite {
   change?: TestCaseChangeKind;
 }
 
+export interface ImplementationSection {
+  name: string;
+  priority: "critical" | "secondary";
+  description: string;
+  files: Callsite[];
+}
+
 export interface NarrativeStep {
   id: string;
   title: string;
@@ -81,7 +89,7 @@ export interface NarrativeStep {
   checks: StepChecks;
   cases?: TestCase[];
   interfaces?: InterfaceChange[];
-  focus?: string[];
+  sections?: ImplementationSection[];
   evidence?: Evidence[];
 }
 

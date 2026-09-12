@@ -39,10 +39,14 @@ Read [references/artifact-format.md](references/artifact-format.md) before autho
 Inspect the source diff and enough surrounding code to understand intent, behavior, dependencies, and test coverage. Organize the smallest useful conceptual steps, not one step per file or commit. Prefer this shape when supported by the change:
 
 1. Open with a description-only explanation of the problem and high-level approach. It contains no patch.
-2. Introduce new or changed tests near the behavior they motivate. Describe each test area in terms of the broader functionality and risk it covers; do not merely enumerate literal test-case names, because Heptapod extracts those from the test source with SWC.
+2. Introduce new or changed tests near the behavior they motivate. Describe each test area in terms of the broader functionality and risk it covers; do not merely enumerate literal test-case names, because Heptapod extracts those from the test source with the configured fixture parser.
 3. Separate substantive implementation changes from interface migration. Put the core logic in focused implementation steps; put signature/type/interface changes and their mechanical caller updates in refactor steps.
 4. Separate unrelated changes into independent steps.
 5. Add test checkpoints at meaningful points. Automated and manual coverage share the Tests presentation and are distinguished by their section badges. A no-diff `manual` artifact step may carry concrete procedures and expected outcomes.
+
+Every test, implementation, and refactor step must account for **all files in its diff** in its structured content. Test steps cover them through `cases[].files` (including test helpers and project setup); refactor steps through interface sources and nested callsites; implementation steps through `sections[].files`. A Markdown mention or the sidebar file list does not count. Validation and ingestion reject missing files and references outside the step diff.
+
+For implementation steps, use Critical and Secondary sections, each with a name, Markdown explanation, and labeled file list. Critical files contain the behavior, contract, or risk the reviewer must inspect and open inline by default. Secondary files support that change and appear in the compact description/file/status list. Explain why the files merit that priority; do not call files secondary merely to shorten the page. Place each file in exactly one section. Favor isolated conceptual changes over a single step with many implementation sections. If a section needs an independent explanation or introduces another behavior, consider making it a separate step.
 
 For large changes, prefer multiple small red/green/refactor loops over one tests-first block followed by one implementation block. It is valid to define a focused set of tests, implement enough to pass them, change an interface, introduce the next test area, temporarily break earlier checks, and repair them in a later step. Tests may move between passing and failing as the intermediate contract evolves; record the expected or observed state honestly after every step.
 
@@ -60,11 +64,13 @@ For refactor steps, make each entry in `interfaces` one self-contained refactor 
 
 When splitting is straightforward, extract complete file sections or independent hunks from `source.diff`. When steps touch overlapping lines, use an isolated temporary index to generate each patch between consecutive states. Do not create a Git worktree yourself and never modify the user's working tree merely to manufacture patches. Worktree creation belongs exclusively to the CLI's ingestion verifier.
 
+Write the overall test summary for the user as a description of the changeset: the behavior covered, the risks checked, the results, and any limits on that evidence. Keep it agnostic of tooling. Do not mention Heptapod, ingestion, repeated test runs, or validation requirements in that summary. Apply the same rule to explanatory test prose and check details; operational instructions below govern your work, not the narrative's subject.
+
 ## Report verification state honestly
 
 Every step has `automated` and `manual` check arrays describing the expected state *after that step*. Carry relevant checks forward so the viewer shows when each check should transition from failing to passing. Use `basis: observed` only for evidence that existed before ingestion; otherwise use `basis: expected`. During ingestion, Heptapod independently reconstructs every step in its own temporary worktree, runs changed test fixtures at intermediate steps, runs the complete suite at the final step, and stores the actual result beside these expectations. It also records parsed failures that do not match any expected failing check. Never edit the expectations after seeing the observed run merely to hide a mismatch.
 
-If the repository has a `.heptapod.json`, treat its test prerequisites and runner as authoritative; do not replace project-specific setup with guesses in the narrative or create a worktree yourself.
+If the repository has a `.heptapod.json`, treat its test prerequisites, build commands, runner format, and fixture format as authoritative; do not replace project-specific setup with guesses in the narrative or create a worktree yourself.
 
 Use failing status deliberately when tests or behavior are introduced before their implementation. Use `not-run` when there is not enough evidence to infer a result, and explain blockers or important limitations in `detail`.
 

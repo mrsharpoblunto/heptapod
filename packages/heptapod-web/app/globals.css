@@ -263,7 +263,10 @@
   .hljs-type, .hljs-built_in { color: var(--syntax-type); }
   .hljs-meta, .hljs-meta .hljs-keyword { color: var(--syntax-meta); }
 
-  .focused-diff { @apply mt-6; }
+  .implementation-sections { @apply mt-7 grid gap-7; }
+  .implementation-section { @apply min-w-0 border-b border-[var(--border)] pb-6 last:border-b-0; }
+  .implementation-section > .markdown { @apply mt-2 mb-4; }
+  .focused-diff { @apply mt-4; }
   .connected-file-header { @apply grid grid-cols-[minmax(0,1fr)_40px]; }
   .connected-file-header .file-link { @apply w-full rounded-r-none; }
   .inline-diff-toggle { @apply flex cursor-pointer items-center justify-center rounded-tr-md border border-l-0 border-[var(--border)] bg-[var(--canvas-subtle)] text-[var(--fg-muted)] hover:bg-[var(--canvas-inset)] hover:text-[var(--fg)]; }

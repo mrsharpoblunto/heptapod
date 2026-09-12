@@ -1,0 +1,15 @@
+{
+  "test": {
+    "fixtures": { "format": "javascript" },
+    "prerequisites": [
+      { "command": ["pnpm", "install", "--frozen-lockfile"] }
+    ],
+    "build": [
+      { "command": ["pnpm", "--dir", "packages/heptapod", "build"] }
+    ],
+    "runner": {
+      "format": "command",
+      "command": ["pnpm", "test", "{files}"]
+    }
+  }
+}

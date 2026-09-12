@@ -88,7 +88,7 @@ function authorNarrative(repo: string, base: string, head: string, artifact: str
       kind: "implementation",
       body: "steps/03-implementation.md",
       diff: "diffs/03-implementation.diff",
-      focus: ["src/math.js"],
+      sections: [{ name: "Bounds", priority: "critical", description: "The bounds algorithm determines the result. See [app](app.js).", files: [{ label: "Clamp arithmetic", file: "src/math.js" }] }],
       checks: { automated: [{ label: "Clamp regression", status: "passing", basis: "expected" }], manual: [] },
     },
     {
@@ -158,6 +158,9 @@ test("capture, validate, ingest, and load an exact narrative stack", () => {
     ?.fileDiffs.find((file) => file.path === "src/math.js");
   assert.match(implementationFile?.beforeContent ?? "", /export const add/);
   assert.match(implementationFile?.afterContent ?? "", /export const clamp/);
+  const implementation = ingested.payload.steps.find((step) => step.id === "implement-clamp");
+  assert.match(implementation?.sections?.[0].description ?? "", /heptapod-file:app\.js/);
+  assert.deepEqual(implementation?.referenceFiles?.map((file) => file.path), ["app.js"]);
   assert.equal(ingested.payload.steps.find((step) => step.id === "migrate-app")?.interfaces?.[0].callsites[0].change, "changed");
   assert.equal(getReview("42", databasePath)?.payload.verification.exact, true);
   assert.deepEqual(listReviews(databasePath).map((review) => review.id), ["42"]);
@@ -310,7 +313,7 @@ test("validation accepts meaningful intermediate content absent from the final d
       title: "Expose the broken state",
       kind: "implementation",
       diff: "diffs/02-red.diff",
-      focus: ["state.txt"],
+      sections: [{ name: "State", priority: "critical", description: "Defines the current behavior.", files: [{ label: "Behavior", file: "state.txt" }] }],
       checks: { automated: [{ label: "state is green", status: "failing", basis: "expected" }], manual: [] },
     },
     {
@@ -318,7 +321,7 @@ test("validation accepts meaningful intermediate content absent from the final d
       title: "Reach the working state",
       kind: "implementation",
       diff: "diffs/03-green.diff",
-      focus: ["state.txt"],
+      sections: [{ name: "State", priority: "critical", description: "Defines the current behavior.", files: [{ label: "Behavior", file: "state.txt" }] }],
       checks: { automated: [{ label: "State check", status: "passing", basis: "expected" }], manual: [] },
     },
   );
@@ -393,7 +396,7 @@ test("binary patches and quoted Git paths retain their file identity", () => {
     title: "Add the binary asset",
     kind: "implementation",
     diff: "diffs/02-binary.diff",
-    focus: [binaryPath],
+    sections: [{ name: "Asset", priority: "critical", description: "The asset is the complete change.", files: [{ label: "Binary asset", file: binaryPath }] }],
     checks: { automated: [], manual: [] },
   });
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);

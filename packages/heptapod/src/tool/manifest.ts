@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, extname, relative, resolve } from "node:path";
+import { assertStepFileCoverage } from "./file-coverage.js";
+import { splitPatchFiles } from "./patch.js";
 import type {
   Callsite,
   Evidence,
@@ -149,7 +151,7 @@ export function loadManifest(manifestPath: string): {
       assert(step.cases.length > 0, `${label}.cases must describe at least one test case`);
       step.cases.forEach((testCase, caseIndex) => {
         nonEmptyString(testCase.description, `${label}.cases[${caseIndex}].description`);
-        assert(Array.isArray(testCase.files) && testCase.files.length > 0, `${label}.cases[${caseIndex}].files must link at least one changed test file`);
+        assert(Array.isArray(testCase.files) && testCase.files.length > 0, `${label}.cases[${caseIndex}].files must link at least one changed file`);
       });
     }
     if (step.kind === "refactor") {
@@ -168,10 +170,23 @@ export function loadManifest(manifestPath: string): {
       assert(callsiteCount > 0, `${label}.interfaces must contain at least one callsite`);
     }
     if (step.kind === "implementation") {
-      assert(step.focus, `${label}.focus is required`);
-      assert(Array.isArray(step.focus) && step.focus.length > 0, `${label}.focus must be a non-empty array`);
-      step.focus.forEach((file, fileIndex) => nonEmptyString(file, `${label}.focus[${fileIndex}]`));
+      assert(!("focus" in step), `${label}.focus is no longer supported; use Critical/Secondary sections covering every changed file`);
+      assert(Array.isArray(step.sections) && step.sections.length > 0, `${label}.sections must be a non-empty array`);
+      step.sections.forEach((section, sectionIndex) => {
+        const sectionLabel = `${label}.sections[${sectionIndex}]`;
+        assert(section && typeof section === "object", `${sectionLabel} must be an object`);
+        nonEmptyString(section.name, `${sectionLabel}.name`);
+        nonEmptyString(section.description, `${sectionLabel}.description`);
+        assert(section.priority === "critical" || section.priority === "secondary", `${sectionLabel}.priority must be critical or secondary`);
+        assert(Array.isArray(section.files) && section.files.length > 0, `${sectionLabel}.files must be a non-empty array`);
+        validateFileReferences(section.files, `${sectionLabel}.files`);
+        section.files.forEach((file, fileIndex) => {
+          nonEmptyString(file.label, `${sectionLabel}.files[${fileIndex}].label`);
+          nonEmptyString(file.file, `${sectionLabel}.files[${fileIndex}].file`);
+        });
+      });
     }
+    if (step.diff) assertStepFileCoverage(step, splitPatchFiles(readArtifact(absolutePath, step.diff).toString("utf8")));
   }
 
   return { manifest, manifestPath: absolutePath };

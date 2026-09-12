@@ -59,7 +59,7 @@ Every step contains:
         "status": "passing",
         "basis": "observed",
         "command": "npm test -- upload-client",
-        "detail": "Ran against the reconstructed state after this step."
+        "detail": "Transient errors recover within the retry limit."
       }
     ],
     "manual": [
@@ -105,7 +105,9 @@ The first step must be a description. A manual step's Markdown should include pr
 
 ## Test steps
 
-The `cases` entries describe broad test areas, not individual `it()`/`test()` names. Explain the functionality and risk covered without restating the literal cases; Heptapod parses those names and their added/removed/changed status from the before/after source using SWC. Each area must link to at least one file changed by the step patch:
+Keep the overall test summary and explanatory prose about the changeset's behavior, coverage, results, and limitations. Do not discuss Heptapod, repeated execution, ingestion, or validation requirements.
+
+The `cases` entries describe broad test areas, not individual `it()`/`test()` names. Explain the functionality and risk covered without restating the literal cases; Heptapod parses those names and their added/removed/changed status from the before/after source using the configured fixture parser. Each area must link to at least one file changed by the step patch. Together, the areas must cover every changed file, including helpers, fixtures, and project setup. Explain supporting files in the relevant area even when they contain no named test cases:
 
 ```json
 {
@@ -128,7 +130,7 @@ The `cases` entries describe broad test areas, not individual `it()`/`test()` na
 
 ## Refactor steps
 
-Describe the changed interface separately from every updated callsite. File references must be paths in this step's patch.
+Describe the changed interface separately from every updated callsite. Interface sources and nested callsites together must cover every file in this step's patch. Each reference must be a path in that patch.
 
 ```json
 {
@@ -158,7 +160,9 @@ Describe the changed interface separately from every updated callsite. File refe
 
 ## Implementation steps
 
-`focus` names one or more files whose diffs appear in the main column. Every focused file must be changed by the step patch. Other changed files remain accessible in the detail column.
+`sections` replaces `focus`. Every section requires a non-empty `name`, `description` (inline Markdown), `priority` (`critical` or `secondary`), and `files` list. Each file requires a descriptive `label` and repository-relative `file`; optional `change` uses the same added/removed/changed values as refactor callsites. Relative images in section Markdown resolve beside the step's body file, or beside the manifest when no body is present.
+
+Critical sections show a Critical badge and every file's inline diff open by default. Secondary sections use the same description/file/status list as refactor callsites, with diffs opened on selection. Explain why each group needs its priority. Every changed file must appear **exactly once** across the sections. Unknown, omitted, and duplicate files are rejected; legacy `focus` manifests must be migrated. Prefer a few cohesive sections and split independent changes into separate steps.
 
 ```json
 {
@@ -167,7 +171,20 @@ Describe the changed interface separately from every updated callsite. File refe
   "kind": "implementation",
   "body": "steps/03-implementation.md",
   "diff": "diffs/03-implementation.diff",
-  "focus": ["src/upload.ts"],
+  "sections": [
+    {
+      "name": "Retry bounds and recovery",
+      "priority": "critical",
+      "description": "The retry loop determines **which failures recover** and enforces the attempt limit. Review this logic closely because an incorrect bound can duplicate uploads.",
+      "files": [{ "label": "Bound transient retries", "file": "src/upload.ts" }]
+    },
+    {
+      "name": "Expose the policy",
+      "priority": "secondary",
+      "description": "The public export makes the policy available to callers. It adds no retry behavior, so a compact review is sufficient.",
+      "files": [{ "label": "Export retry policy", "file": "src/index.ts", "change": "changed" }]
+    }
+  ],
   "checks": { "automated": [], "manual": [] }
 }
 ```
@@ -177,6 +194,7 @@ Describe the changed interface separately from every updated callsite. File refe
 - Use Git unified patches, including `diff --git` headers. Preserve binary patch data when present.
 - Each patch is relative to the cumulative state after prior patch-bearing steps, not necessarily directly to the base.
 - Description and manual steps do not affect patch order.
-- A path referenced by `focus`, `cases[].files`, `interfaces[].file`, or `callsites[].file` must occur in that step patch.
+- Every file in a test, implementation, or refactor diff must be covered by `cases[].files`, `sections[].files[].file`, or `interfaces[].file` plus `interfaces[].callsites[].file`, respectively. All references must occur in that step patch. Validation and ingestion fail with the missing paths if coverage is incomplete.
+- Implementation sections partition the files exactly once. A file may serve multiple test areas or interfaces when relevant. For renames, reference the destination path; for deletions, reference the deleted path.
 - It is acceptable for intermediate content to be absent from the final tree, but avoid invented churn that does not improve the explanation.
 - Do not edit `source.diff` to make validation pass. Repair the step patches or narrative decomposition.

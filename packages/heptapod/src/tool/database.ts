@@ -45,6 +45,7 @@ function openDatabase(databasePath?: string): DatabaseSync {
   const path = resolveDatabasePath(databasePath);
   mkdirSync(dirname(path), { recursive: true });
   const database = new DatabaseSync(path);
+  database.exec("PRAGMA busy_timeout = 5000;");
   database.exec("PRAGMA journal_mode = WAL;");
   database.exec("PRAGMA foreign_keys = ON;");
   database.exec(`

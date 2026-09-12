@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { test, vi } from "vitest";
 import type { RenderModel } from "@thestraylight/heptapod/types";
 import { ReviewIndex } from "../src/web/ReviewIndex.js";
-import { buildDiffSegments, parseDiff, ReviewViewer } from "../src/web/ReviewViewer.js";
+import { buildDiffSegments, DiffView, parseDiff, ReviewViewer } from "../src/web/ReviewViewer.js";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => {} }) }));
 
@@ -154,4 +154,48 @@ test("renders ingestion instructions and linked pull-request metadata on the ind
   assert.match(markup, /https:\/\/github.com\/example\/math\/pull\/42/);
   assert.match(markup, new RegExp(`https://github.com/example/math/commit/${base}`));
   assert.match(markup, /Sep 11, 2026/);
+});
+
+test("implementation groups expand every critical diff and list secondary descriptions and statuses", () => {
+  const files = ["logic.ts", "bounds.ts", "setup.ts"];
+  const step: RenderModel["steps"][number] = {
+    id: "behavior", title: "Bound retries", kind: "implementation", number: 1, body: "", patch: "",
+    checks: { automated: [], manual: [] }, stats: { additions: 3, deletions: 0, files: 3 },
+    fileDiffs: files.map((path, index) => ({ path, patch: `@@ -0,0 +1 @@\n+unique_${index}\n`, beforeContent: null, afterContent: `unique_${index}\n` })),
+    sections: [{
+      name: "Retry decisions", priority: "critical", description: "Enforces **retry bounds**.",
+      files: [{ label: "Retry loop", file: files[0] }, { label: "Attempt limit", file: files[1] }],
+    }, {
+      name: "Registration", priority: "secondary", description: "Registers the behavior without changing the algorithm.",
+      files: [{ label: "Register retry policy", file: files[2] }],
+    }],
+  };
+  const markup = renderToStaticMarkup(createElement(ReviewViewer, { data: { ...data, steps: [step] }, reviewId: "42", updatedAt: "2026-09-11T12:00:00.000Z" }));
+  assert.match(markup, /test-type-badge">Critical</);
+  assert.match(markup, /test-type-badge">Secondary</);
+  assert.match(markup, /<strong>retry bounds<\/strong>/);
+  for (const file of files.slice(0, 2)) assert.ok(markup.includes(`aria-expanded="true" aria-label="Collapse ${file} diff"`));
+  assert.match(markup, /unique_0/);
+  assert.match(markup, /unique_1/);
+  assert.doesNotMatch(markup, /unique_2|Collapse setup\.ts diff/);
+  assert.match(markup, /connected-file-list/);
+  assert.match(markup, /Register retry policy/);
+  assert.match(markup, /setup\.ts/);
+  assert.match(markup, /file-link test-case-added/);
+});
+
+
+test("unchanged source uses one line-number column while changed source retains both", () => {
+  const unchanged = renderToStaticMarkup(createElement(DiffView, {
+    filePath: "reference.ts", patch: "@@ -1,2 +1,2 @@\n first\n second\n",
+    beforeContent: "first\nsecond\n", afterContent: "first\nsecond\n", compact: true,
+  }));
+  assert.match(unchanged, /diff-compact diff-pure/);
+  assert.equal(unchanged.match(/class="line-number"/g)?.length, 2);
+  const changed = renderToStaticMarkup(createElement(DiffView, {
+    filePath: "changed.ts", patch: "@@ -1 +1 @@\n-old\n+new\n",
+    beforeContent: "old\n", afterContent: "new\n", compact: true,
+  }));
+  assert.doesNotMatch(changed, /diff-pure/);
+  assert.equal(changed.match(/class="line-number"/g)?.length, 4);
 });

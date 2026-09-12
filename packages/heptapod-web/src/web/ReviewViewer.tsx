@@ -31,6 +31,7 @@ import {
 } from "react";
 import hljs from "highlight.js/lib/common";
 import type {
+  Callsite,
   Check,
   Evidence,
   PatchFile,
@@ -333,7 +334,7 @@ export function buildDiffSegments(
   return segments;
 }
 
-function DiffView({
+export function DiffView({
   filePath,
   patch,
   compact = false,
@@ -361,6 +362,7 @@ function DiffView({
     const firstHunk = parsed.findIndex((line) => line.type === "hunk");
     return firstHunk === -1 ? parsed : parsed.slice(firstHunk);
   }, [patch]);
+  const unchanged = !lines.some((line) => line.type === "add" || line.type === "del");
   const segments = useMemo(
     () => buildDiffSegments(lines, beforeContent, afterContent),
     [afterContent, beforeContent, lines],
@@ -427,7 +429,7 @@ function DiffView({
     const marker = isCodeLine && !omitMarker ? line.content.slice(0, 1) : "";
     const content = isCodeLine ? line.content.slice(1) : line.content;
     return <div className={classNames(`diff-line diff-${line.type}`, targetMatch.keys.has(line.key) && "diff-target")} data-diff-key={line.key} key={line.key}>
-      {pureAddition
+      {pureAddition || unchanged
         ? <span className="line-number">{line.next ?? ""}</span>
         : pureDeletion
           ? <span className="line-number">{line.old ?? ""}</span>
@@ -454,7 +456,7 @@ function DiffView({
   </div>;
 
   return <div className="diff-shell">
-    <div className={classNames("diff", compact && "diff-compact", (pureAddition || pureDeletion) && "diff-pure")} ref={containerRef}>
+    <div className={classNames("diff", compact && "diff-compact", (pureAddition || pureDeletion || unchanged) && "diff-pure")} ref={containerRef}>
       {gaps.length === 0 && githubFileUrl && <div className="diff-gap diff-control-gap">{globalActions}</div>}
       {segments.map((segment) => segment.kind === "lines"
         ? <div className="diff-lines" key={segment.id}>{segment.lines.map(renderLine)}</div>
@@ -492,7 +494,7 @@ function StatusBadge({ status }: Pick<Check, "status">): ReactNode {
 }
 
 function ChangeIcon({ change }: { change: "added" | "removed" | "changed" }): ReactNode {
-  return <span className="test-change-icon">
+  return <span className="test-change-icon" role="img" aria-label={change}>
     {change === "added" && <Plus aria-hidden="true" size={13} />}
     {change === "removed" && <Minus aria-hidden="true" size={13} />}
     {change === "changed" && <RefreshCw aria-hidden="true" size={12} />}
@@ -720,8 +722,7 @@ function TestsStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNo
   </>;
 }
 
-function RefactorStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNode {
-  const interfaces = step.interfaces ?? [];
+function ChangedFileList({ files, step, selectedFile, onSelectFile }: StepViewProps & { files: Callsite[] }): ReactNode {
   const callsiteChange = (file: string, declared?: "added" | "removed" | "changed") => {
     if (declared) return declared;
     const snapshot = step.fileDiffs.find((candidate) => candidate.path === file);
@@ -729,6 +730,20 @@ function RefactorStep({ step, selectedFile, onSelectFile }: StepViewProps): Reac
     if (snapshot?.afterContent === null) return "removed";
     return "changed";
   };
+  return <div className="connected-file-list">
+    {files.map((file, index) => <FileLink
+      file={file.file}
+      label={file.label}
+      change={callsiteChange(file.file, file.change)}
+      key={`${file.file}-${index}`}
+      active={selectedFile === file.file}
+      onSelect={onSelectFile}
+    />)}
+  </div>;
+}
+
+function RefactorStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNode {
+  const interfaces = step.interfaces ?? [];
   return <>
     {step.body && <Markdown source={step.body} files={allStepFiles(step)} onSelectFile={onSelectFile} />}
     <div className="refactor-sections">
@@ -748,19 +763,7 @@ function RefactorStep({ step, selectedFile, onSelectFile }: StepViewProps): Reac
           </div>}
           <div className="refactor-file-group">
             <div className="refactor-subheading">Call sites</div>
-            <div className="connected-file-list">
-              {item.callsites.map((callsite, callsiteIndex) => {
-                const change = callsiteChange(callsite.file, callsite.change);
-                return <FileLink
-                  file={callsite.file}
-                  label={callsite.label}
-                  change={change}
-                  key={`${callsite.file}-${callsiteIndex}`}
-                  active={selectedFile === callsite.file}
-                  onSelect={onSelectFile}
-                />;
-              })}
-            </div>
+            <ChangedFileList files={item.callsites} step={step} selectedFile={selectedFile} onSelectFile={onSelectFile} />
           </div>
         </div>
       </section>)}
@@ -782,38 +785,51 @@ function ImplementationStep({
   source,
 }: StepViewProps & { source: RenderModel["source"] }): ReactNode {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(() => new Set());
-  const focused = (step.focus ?? [])
-    .map((path) => step.fileDiffs.find((file) => file.path === path))
-    .filter((file): file is PatchFile => file !== undefined);
+  const filesByPath = new Map(step.fileDiffs.map((file) => [file.path, file]));
   return <>
     {step.body && <Markdown source={step.body} files={allStepFiles(step)} onSelectFile={onSelectFile} />}
-    {focused.map((file) => <section className="focused-diff" key={file.path}>
-      <div className="connected-file-header">
-        <FileLink file={file.path} active={selectedFile === file.path} onSelect={onSelectFile} connected connectedCollapsed={collapsedFiles.has(file.path)} />
-        <button
-          aria-expanded={!collapsedFiles.has(file.path)}
-          aria-label={collapsedFiles.has(file.path) ? `Expand ${file.path} diff` : `Collapse ${file.path} diff`}
-          className={classNames("inline-diff-toggle", collapsedFiles.has(file.path) && "collapsed")}
-          onClick={() => setCollapsedFiles((current) => {
-            const next = new Set(current);
-            if (next.has(file.path)) next.delete(file.path);
-            else next.add(file.path);
-            return next;
+    <div className="implementation-sections">
+      {(step.sections ?? []).map((section, index) => <section className="implementation-section" key={index}>
+        <div className="test-area-heading">
+          <h3>{section.name}</h3>
+          <span className="test-type-badge">{section.priority === "critical" ? "Critical" : "Secondary"}</span>
+        </div>
+        <Markdown source={section.description} files={allStepFiles(step)} onSelectFile={onSelectFile} />
+        {section.priority === "secondary"
+          ? <ChangedFileList files={section.files} step={step} selectedFile={selectedFile} onSelectFile={onSelectFile} />
+          : section.files.map((entry) => {
+            const file = filesByPath.get(entry.file);
+            if (!file) return null;
+            return <div className="focused-diff" key={file.path}>
+              <div className="connected-file-header">
+                <FileLink file={file.path} label={entry.label} active={selectedFile === file.path} onSelect={onSelectFile} connected connectedCollapsed={collapsedFiles.has(file.path)} />
+                <button
+                  aria-expanded={!collapsedFiles.has(file.path)}
+                  aria-label={collapsedFiles.has(file.path) ? `Expand ${file.path} diff` : `Collapse ${file.path} diff`}
+                  className={classNames("inline-diff-toggle", collapsedFiles.has(file.path) && "collapsed")}
+                  onClick={() => setCollapsedFiles((current) => {
+                    const next = new Set(current);
+                    if (next.has(file.path)) next.delete(file.path);
+                    else next.add(file.path);
+                    return next;
+                  })}
+                  title={collapsedFiles.has(file.path) ? "Expand inline diff" : "Collapse inline diff"}
+                >{collapsedFiles.has(file.path)
+                  ? <ChevronDown aria-hidden="true" size={15} />
+                  : <ChevronUp aria-hidden="true" size={15} />}
+                </button>
+              </div>
+              {!collapsedFiles.has(file.path) && <DiffView
+                filePath={file.path}
+                patch={file.patch}
+                beforeContent={file.beforeContent}
+                afterContent={file.afterContent}
+                githubFileUrl={githubFileUrl(source, file)}
+              />}
+            </div>;
           })}
-          title={collapsedFiles.has(file.path) ? "Expand inline diff" : "Collapse inline diff"}
-        >{collapsedFiles.has(file.path)
-          ? <ChevronDown aria-hidden="true" size={15} />
-          : <ChevronUp aria-hidden="true" size={15} />}
-        </button>
-      </div>
-      {!collapsedFiles.has(file.path) && <DiffView
-        filePath={file.path}
-        patch={file.patch}
-        beforeContent={file.beforeContent}
-        afterContent={file.afterContent}
-        githubFileUrl={githubFileUrl(source, file)}
-      />}
-    </section>)}
+      </section>)}
+    </div>
   </>;
 }
 
@@ -1069,7 +1085,7 @@ export function ReviewViewer({
       <main className="main-panel">
         <div className="step-content" ref={stepContentRef}>
           <StepHeading step={step} />
-          <StepContent step={step} selectedFile={selectedFile} onSelectFile={openFile} source={data.source} />
+          <StepContent key={step.id} step={step} selectedFile={selectedFile} onSelectFile={openFile} source={data.source} />
         </div>
         <div className="step-pager">
           <div className="step-control" aria-label="Step navigation">

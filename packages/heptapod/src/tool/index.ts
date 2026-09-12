@@ -17,7 +17,9 @@ export {
 } from "./database.js";
 
 export { loadHeptapodConfig } from "./config.js";
-export type { HeptapodCommandConfig, HeptapodConfig } from "./config.js";
+export type { HeptapodCommandConfig, HeptapodConfig, HeptapodTestRunnerConfig } from "./config.js";
+export type { FixtureFormat } from "./test-fixtures/index.js";
+export type { RunnerFormat } from "./test-runners/index.js";
 
 export type {
   Check,
