@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
@@ -1033,13 +1034,43 @@ export function ReviewViewer({
   data,
   reviewId,
   updatedAt,
+  updating = false,
 }: {
   data: RenderModel;
   reviewId?: string;
   updatedAt: string;
+  updating?: boolean;
 }): ReactNode {
+  const router = useRouter();
+  const [liveStatus, setLiveStatus] = useState<{ updatedAt: string; pending: boolean } | null>(null);
+  const isUpdating = liveStatus?.updatedAt === updatedAt ? liveStatus.pending : updating;
+
+  useEffect(() => {
+    if (!reviewId) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/reviews?review=${encodeURIComponent(reviewId)}`, { cache: "no-store" });
+        if (!response.ok) return;
+        const review = await response.json() as { status: "pending" | "ready" | "failed"; updatedAt: string };
+        if (stopped) return;
+        const pending = review.status === "pending";
+        setLiveStatus((current) => current?.updatedAt === updatedAt && current.pending === pending ? current : { updatedAt, pending });
+        if (review.status !== "pending" && (review.updatedAt !== updatedAt || updating)) router.refresh();
+      } catch {
+        // Keep the current review available through a transient polling failure.
+      } finally {
+        if (!stopped) timer = setTimeout(poll, 1_000);
+      }
+    };
+    timer = setTimeout(poll, 1_000);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [reviewId, router, updatedAt, updating]);
+
   useReviewBackdropState("ready");
-  const [stepIndex, setStepIndex] = useState(0);
+  const [stepId, setStepId] = useState(data.steps[0].id);
+  const stepIndex = Math.max(0, data.steps.findIndex((item) => item.id === stepId));
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [detailWidth, setDetailWidth] = useState(420);
   const [tabs, setTabs] = useState<string[]>([""]);
@@ -1129,7 +1160,7 @@ export function ReviewViewer({
       initializedFromLocation.current = true;
       const requestedIndex = data.steps.findIndex((item) => `#${item.id}` === window.location.hash);
       if (requestedIndex > 0) {
-        setStepIndex(requestedIndex);
+        setStepId(data.steps[requestedIndex].id);
         return;
       }
     }
@@ -1143,7 +1174,7 @@ export function ReviewViewer({
 
   return <ReviewRuntimeContext.Provider value={{ reviewId }}><div className="app-shell">
     <header className="topbar">
-      <ReviewHeader review={{
+      <ReviewHeader updating={isUpdating} review={{
         id: reviewId ?? `${data.source.base}/${data.source.head}`,
         title: data.title,
         summary: data.summary,
@@ -1164,7 +1195,7 @@ export function ReviewViewer({
     >
       <nav className="step-nav" aria-label="Narrative steps">
         {data.steps.map((item, index) => {
-          return <button className={classNames("step-button", index === stepIndex && "active")} onClick={() => setStepIndex(index)} key={item.id}>
+          return <button className={classNames("step-button", index === stepIndex && "active")} onClick={() => setStepId(item.id)} key={item.id}>
             <span className="step-number">{String(index + 1).padStart(2, "0")}</span>
             <span className="step-copy"><span>{item.title}</span><small>{kindLabel(item.kind)}</small></span>
             <span className={classNames(
@@ -1182,11 +1213,11 @@ export function ReviewViewer({
         </div>
         <div className="step-pager">
           <div className="step-control" aria-label="Step navigation">
-            <button aria-label="Previous step" disabled={stepIndex === 0} onClick={() => setStepIndex((index) => index - 1)}>
+            <button aria-label="Previous step" disabled={stepIndex === 0} onClick={() => setStepId(data.steps[stepIndex - 1].id)}>
               <ChevronLeft aria-hidden="true" size={17} />
             </button>
             <span>{stepIndex + 1} / {data.steps.length}</span>
-            <button aria-label="Next step" disabled={stepIndex === data.steps.length - 1} onClick={() => setStepIndex((index) => index + 1)}>
+            <button aria-label="Next step" disabled={stepIndex === data.steps.length - 1} onClick={() => setStepId(data.steps[stepIndex + 1].id)}>
               <ChevronRight aria-hidden="true" size={17} />
             </button>
           </div>

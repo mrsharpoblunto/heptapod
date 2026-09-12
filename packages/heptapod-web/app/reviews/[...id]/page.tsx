@@ -21,7 +21,7 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
   const id = (await params).id.join("/");
   const review = getReview(id);
   if (!review) notFound();
-  if (review.status === "pending" || review.status === "failed") {
+  if ((review.status === "pending" && !review.payload) || review.status === "failed") {
     return <PendingReview
       id={review.id}
       title={review.title}
@@ -31,5 +31,5 @@ export default async function ReviewPage({ params }: ReviewPageProps) {
     />;
   }
   if (!review.payload) notFound();
-  return <ReviewViewer data={review.payload} reviewId={id} updatedAt={review.updatedAt} />;
+  return <ReviewViewer data={review.payload} reviewId={id} updatedAt={review.updatedAt} updating={review.status === "pending"} />;
 }

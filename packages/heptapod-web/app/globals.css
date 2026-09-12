@@ -128,6 +128,8 @@
   .review-title { @apply min-w-0 truncate text-[var(--fg)]; }
   .title-block > .review-subheader { @apply mt-0.5 truncate text-xs text-[var(--fg-muted)]; }
   .source-metadata { @apply flex items-baseline gap-4 font-mono text-xs leading-5 text-[var(--fg-muted)]; }
+  .review-updating { @apply inline-flex items-baseline gap-1.5 whitespace-nowrap; }
+  .review-updating svg { @apply self-center; }
   .github-link {
     @apply inline-flex items-baseline gap-1.5 rounded-md border border-[var(--border)] bg-[var(--canvas)] px-2.5 py-1.5 font-semibold text-[var(--fg)] no-underline shadow-[var(--shadow)] hover:bg-[var(--canvas-inset)] hover:no-underline;
   }
@@ -413,6 +415,8 @@
   }
   .ingestion-help { @apply mb-8 rounded-lg border border-white/35 bg-white/72 p-5 shadow-[0_12px_40px_rgba(31,35,40,0.08)] backdrop-blur-md dark:border-white/10 dark:bg-[#161b20]/78; }
   .ingestion-help > p { @apply max-w-3xl text-sm leading-6 text-[var(--fg-muted)]; }
+  .ingestion-help > p + p { @apply mt-2; }
+  .ingestion-help > p a { @apply font-semibold text-[var(--accent)] underline underline-offset-2; }
   .ingestion-commands { @apply mt-4 grid grid-cols-2 gap-3; }
   .ingestion-commands > div { @apply grid gap-1.5 rounded-md bg-black/4 p-3 dark:bg-white/5; }
   .ingestion-commands span { @apply mb-0.5 text-[11px] font-semibold text-[var(--fg-muted)]; }

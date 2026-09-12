@@ -134,8 +134,19 @@ test("builds expandable context gaps around minimal diff hunks", () => {
   assert.equal(gaps[1].gap.lines[1].content, " five");
 });
 
+test("an updating review keeps its content and shows status before header metadata", () => {
+  const markup = renderToStaticMarkup(createElement(ReviewViewer, {
+    data, reviewId: "42", updatedAt: "2026-09-11T12:00:00.000Z", updating: true,
+  }));
+  assert.match(markup, /class="review-updating" role="status"/);
+  assert.match(markup, /Updating…/);
+  assert.ok(markup.indexOf("review-updating") < markup.indexOf('class="github-link"'));
+  assert.match(markup, /Bound arithmetic results/);
+  assert.match(markup, /Start with/);
+});
+
 test("renders ingestion instructions and linked pull-request metadata on the index", () => {
-  const markup = renderToStaticMarkup(createElement(ReviewIndex, { reviews: [{
+  const markup = renderToStaticMarkup(createElement(ReviewIndex, { repository: { name: "example/math", githubUrl: "https://github.com/example/math" }, reviews: [{
     id: "42",
     title: "Introduce bounded arithmetic",
     summary: "Specify clamping, implement it, and update the app.",
@@ -150,6 +161,9 @@ test("renders ingestion instructions and linked pull-request metadata on the ind
     deletions: 0,
   }] }));
   assert.match(markup, /<h1[^>]*>HEPTAPOD<\/h1>/);
+  assert.match(markup, /Connected repository: <a href="https:\/\/github.com\/example\/math"/);
+  assert.doesNotMatch(markup, /Run Heptapod from the repository/);
+  assert.match(markup, /Use the installed agent skill/);
   assert.match(markup, /heptapod capture --pr/);
   assert.match(markup, /progress-spinner/);
   assert.match(markup, /https:\/\/github.com\/example\/math\/pull\/42/);
