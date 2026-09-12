@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { test, vi } from "vitest";
 import type { RenderModel } from "@thestraylight/heptapod/types";
 import { ReviewIndex } from "../src/web/ReviewIndex.js";
-import { buildDiffSegments, DiffView, parseDiff, ReviewViewer } from "../src/web/ReviewViewer.js";
+import { buildDiffSegments, DiffView, newestFixtureRuns, parseDiff, ReviewViewer } from "../src/web/ReviewViewer.js";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => {} }) }));
 
@@ -80,7 +80,7 @@ test("renders the packaged viewer around shared core model types", () => {
     reviewId: "42",
     updatedAt: "2026-09-11T12:00:00.000Z",
   }));
-  assert.match(markup, /Introduce bounded arithmetic/);
+  assert.match(markup, /<strong class="review-title">Introduce bounded arithmetic<\/strong>/);
   assert.match(markup, /class="review-back-link"[^>]*href="\/"/);
   assert.match(markup, /aria-label="Back to reviews"/);
   assert.match(markup, /Sep 11, 2026/);
@@ -171,7 +171,7 @@ test("implementation groups expand every critical diff and list secondary descri
     }],
   };
   const markup = renderToStaticMarkup(createElement(ReviewViewer, { data: { ...data, steps: [step] }, reviewId: "42", updatedAt: "2026-09-11T12:00:00.000Z" }));
-  assert.match(markup, /test-type-badge">Critical</);
+  assert.match(markup, /test-type-badge critical-badge">Critical</);
   assert.match(markup, /test-type-badge">Secondary</);
   assert.match(markup, /<strong>retry bounds<\/strong>/);
   for (const file of files.slice(0, 2)) assert.ok(markup.includes(`aria-expanded="true" aria-label="Collapse ${file} diff"`));
@@ -198,4 +198,17 @@ test("unchanged source uses one line-number column while changed source retains 
   }));
   assert.doesNotMatch(changed, /diff-pure/);
   assert.equal(changed.match(/class="line-number"/g)?.length, 4);
+});
+
+
+test("newly introduced fixtures precede older coverage without changing their relative order", () => {
+  const run = data.steps[0].testRun!;
+  const fixture = run.fixtureRuns[0];
+  const step = (files: string[]): RenderModel["steps"][number] => ({
+    ...data.steps[0], testRun: { ...run, fixtureRuns: files.map((file) => ({ ...fixture, file })) },
+  });
+  const steps = [step(["old-a.ts", "old-b.ts"]), step(["old-a.ts", "old-b.ts", "new-a.ts", "new-b.ts"]), step(["old-a.ts", "old-b.ts", "new-a.ts", "new-b.ts", "latest.ts"])];
+  assert.deepEqual(newestFixtureRuns(steps, 1).map((run) => run.file), ["new-a.ts", "new-b.ts", "old-a.ts", "old-b.ts"]);
+  assert.deepEqual(newestFixtureRuns(steps, 2).map((run) => run.file), ["latest.ts", "new-a.ts", "new-b.ts", "old-a.ts", "old-b.ts"]);
+  assert.deepEqual(steps[2].testRun!.fixtureRuns.map((run) => run.file), ["old-a.ts", "old-b.ts", "new-a.ts", "new-b.ts", "latest.ts"]);
 });

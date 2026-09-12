@@ -125,18 +125,18 @@
   .title-block { @apply flex min-w-0 flex-col; }
   .title-line { @apply flex min-w-0 items-center gap-2; }
   .title-line strong { @apply min-w-0 truncate text-[17px] font-semibold tracking-[-0.01em] text-[var(--fg)]; }
-  .review-title { @apply min-w-0 truncate text-[var(--fg)] no-underline decoration-[var(--accent)] hover:text-[var(--accent)] hover:underline; }
-  .review-title strong { @apply block text-inherit; }
+  .review-title { @apply min-w-0 truncate text-[var(--fg)]; }
   .title-block > .review-subheader { @apply mt-0.5 truncate text-xs text-[var(--fg-muted)]; }
-  .source-metadata { @apply flex items-center gap-4 text-xs text-[var(--fg-muted)]; }
+  .source-metadata { @apply flex items-baseline gap-4 font-mono text-xs leading-5 text-[var(--fg-muted)]; }
   .github-link {
-    @apply inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--canvas)] px-2.5 py-1.5 font-semibold text-[var(--fg)] no-underline shadow-[var(--shadow)] hover:bg-[var(--canvas-inset)] hover:no-underline;
+    @apply inline-flex items-baseline gap-1.5 rounded-md border border-[var(--border)] bg-[var(--canvas)] px-2.5 py-1.5 font-semibold text-[var(--fg)] no-underline shadow-[var(--shadow)] hover:bg-[var(--canvas-inset)] hover:no-underline;
   }
-  .revisions { @apply flex items-center gap-2; }
+  .github-link svg { @apply self-center; }
+  .revisions { @apply flex items-baseline gap-2; }
   .revisions a { @apply text-[var(--fg)] no-underline hover:text-[var(--accent)] hover:underline; }
-  .revisions code { @apply text-[11px]; }
-  .source-diff-stats { @apply flex items-center gap-2 font-mono text-xs font-semibold; }
-  .review-date { @apply font-mono text-[11px] whitespace-nowrap; }
+  .revisions code { font-size: inherit; }
+  .source-diff-stats { @apply flex items-baseline gap-2 font-semibold; }
+  .review-date { @apply whitespace-nowrap; }
   .additions { @apply text-[var(--success)]; }
   .deletions { @apply text-[var(--danger)]; }
 
@@ -159,8 +159,8 @@
   .step-dot.has-failure { @apply bg-[var(--danger)]; }
   .step-dot.not-run { @apply bg-[var(--fg-muted)]; }
 
-  .main-panel { @apply grid min-h-0 grid-rows-[minmax(0,1fr)_auto] overflow-hidden; }
-  .step-content { @apply min-h-0 overflow-auto px-[clamp(28px,4vw,64px)] pt-9 pb-14; }
+  .main-panel { @apply grid min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden; }
+  .step-content { @apply min-h-0 overflow-auto px-[clamp(28px,4vw,64px)] pt-9 pb-28; }
   .step-heading { @apply mb-7 border-b border-[var(--border)] pb-5; }
   .eyebrow { @apply text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--fg-muted)]; }
   .step-heading h1 { @apply mt-2 max-w-[820px] text-[clamp(28px,3vw,40px)] leading-[1.12] font-semibold tracking-[-0.025em]; }
@@ -197,6 +197,7 @@
   .test-area-heading h3, .test-area-description h3 { @apply text-[15px] font-semibold; }
   .test-area-description p { @apply mt-1 text-[13px] leading-relaxed text-[var(--fg-muted)]; }
   .test-type-badge { @apply shrink-0 rounded-full border border-[var(--border)] bg-[var(--canvas-subtle)] px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em] text-[var(--fg-muted)]; }
+  .critical-badge { @apply border-[var(--warning)] bg-[var(--warning-muted)] text-[var(--warning)]; }
   .manual-test-area, .manual-evidence { @apply border-b border-[var(--border)] py-5 first:pt-0 last:border-b-0; }
   .manual-test-area > p { @apply mt-2 mb-3 text-[13px] leading-relaxed text-[var(--fg-muted)]; }
   .manual-test-area > .status { @apply inline-flex; }
@@ -237,8 +238,8 @@
     border-color: var(--border-muted);
   }
   .file-link { @apply flex w-full max-w-full min-w-0 cursor-pointer items-center gap-2 overflow-hidden rounded-md border border-transparent bg-[var(--canvas-subtle)] px-2.5 py-2 text-left; }
-  .file-link-inline { @apply mx-0.5 inline-flex h-6 w-auto max-w-full rounded-md border-[var(--border)] px-2 py-0 align-middle; }
-  .file-link-inline .file-link-filename { @apply text-[0.82em]; }
+  .file-link-inline { @apply mx-0.5 inline-flex w-auto max-w-full items-baseline rounded-md border-[var(--border)] px-2 py-0 align-baseline; line-height: inherit; }
+  .file-link-inline .file-link-filename { @apply text-[0.82em]; line-height: inherit; }
   .file-link-connected { @apply rounded-b-none border-[var(--border)]; }
   .file-link-connected.connected-collapsed { @apply rounded-bl-md; }
   .file-link:hover, .file-link.active { @apply border-[var(--accent)] bg-[var(--accent-muted)]; }
@@ -305,16 +306,14 @@
   .diff-del.diff-target { background: var(--diff-delete-highlight); }
 
   .detail-panel { @apply grid grid-rows-[44px_minmax(0,1fr)] overflow-hidden bg-[var(--canvas-subtle)]; }
-  .detail-panel.collapsed { @apply block border-l border-[var(--border)]; }
   .detail-header { @apply flex min-w-0 items-stretch gap-0 bg-[var(--canvas-subtle)]; }
-  .detail-panel.collapsed .detail-header { @apply h-11 justify-end; }
   .detail-panel-content { @apply min-h-0 overflow-auto bg-[var(--canvas)] px-4.5 py-5 pb-10; }
   .detail-toggle {
     @apply ml-auto h-full w-11 shrink-0 rounded-none border-0 bg-transparent shadow-none;
     box-shadow: inset 0 -1px 0 var(--border);
   }
   .detail-toggle:hover { @apply bg-transparent text-[var(--fg)]; }
-  .detail-panel.collapsed .detail-toggle { box-shadow: none; }
+  .detail-toggle-floating { @apply fixed top-[76px] right-0 z-40 h-11 w-11 rounded-bl-md border-[var(--border)] shadow-md; }
   .detail-tabs { @apply flex min-w-0 flex-1 items-stretch gap-0 overflow-x-auto; scrollbar-width: none; }
   .detail-tabs::-webkit-scrollbar { display: none; }
   .detail-tabs::after {
@@ -332,7 +331,10 @@
     border-bottom-color: transparent;
   }
   .file-tab { @apply flex max-w-[210px] items-center; }
-  .file-tab > button:first-child { @apply min-w-0 cursor-pointer truncate py-2 pr-1.5 pl-3 font-mono; }
+  .detail-tabs [draggable="true"] { @apply cursor-grab; }
+  .detail-tabs .tab-dragging { @apply opacity-50; }
+  .detail-tabs .tab-drop-target { box-shadow: inset 0 2px 0 var(--accent); }
+  .file-tab > button:first-child { @apply min-w-0 cursor-grab truncate py-2 pr-1.5 pl-3 font-mono; }
   .close-tab { @apply mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded leading-none text-[var(--fg-muted)] hover:bg-[var(--canvas-inset)] hover:text-[var(--fg)]; }
   .resize-handle {
     @apply absolute top-0 bottom-0 left-0 z-30 w-1 cursor-col-resize touch-none bg-[var(--border)] outline-none hover:bg-[var(--accent)] focus:bg-[var(--accent)];
@@ -387,8 +389,12 @@
   .tab-diff .diff { @apply h-full rounded-none border-0; }
   .tab-diff .diff-compact { @apply max-h-none; }
 
-  .step-pager { @apply z-10 flex items-center justify-center border-t border-[var(--border)] bg-[var(--canvas)] px-[clamp(28px,4vw,64px)] py-3 shadow-[0_-4px_12px_rgba(31,35,40,0.06)]; }
-  .step-control { @apply inline-flex items-stretch; }
+  .step-pager {
+    @apply pointer-events-none fixed bottom-0 left-[276px] z-10 flex h-24 items-end justify-center pb-4;
+    right: var(--detail-width);
+    background: linear-gradient(to bottom, transparent, var(--canvas) 85%);
+  }
+  .step-control { @apply pointer-events-auto inline-flex items-stretch rounded-md shadow-sm; }
   .step-control button { @apply flex h-8 w-9 cursor-pointer items-center justify-center border border-[var(--accent)] bg-[var(--accent)] text-white hover:brightness-110 disabled:cursor-default disabled:opacity-35; }
   .step-control button:first-child { @apply rounded-l-md rounded-r-none; }
   .step-control button:last-child { @apply rounded-r-md rounded-l-none; }
@@ -417,7 +423,6 @@
   .review-heading-compact .title-line > a { @apply min-w-0 text-[var(--fg)] no-underline hover:text-[var(--accent)] hover:underline; }
   .review-heading-compact .review-subheader { @apply mt-1 text-sm leading-5 whitespace-normal text-[var(--fg-muted)]; }
   .review-heading-compact .source-metadata { @apply mt-3 flex-wrap gap-x-4 gap-y-2 font-mono; }
-  .review-heading-compact .github-link { @apply font-sans; }
   .review-list h2 { @apply truncate text-base font-semibold; }
   .review-state { @apply mt-3 flex min-w-0 items-center gap-2 rounded-md bg-[var(--canvas-inset)] px-2.5 py-2 text-xs text-[var(--fg-muted)]; }
   .review-state > span:last-child { @apply min-w-0 truncate; }

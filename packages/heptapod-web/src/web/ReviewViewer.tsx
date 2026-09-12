@@ -24,6 +24,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
+  type DragEvent,
   type ElementType,
   type KeyboardEvent,
   type PointerEvent,
@@ -556,16 +558,28 @@ function TestFixtureResult({
   </div>;
 }
 
+export function newestFixtureRuns(steps: RenderStep[], stepIndex: number): TestFixtureRun[] {
+  const introduced = new Map<string, number>();
+  steps.slice(0, stepIndex + 1).forEach((step, index) => {
+    for (const run of step.testRun?.fixtureRuns ?? []) {
+      if (!introduced.has(run.file)) introduced.set(run.file, index);
+    }
+  });
+  return [...(steps[stepIndex].testRun?.fixtureRuns ?? [])]
+    .sort((left, right) => introduced.get(right.file)! - introduced.get(left.file)!);
+}
+
 function Checks({
   step,
+  fixtureRuns,
   selectedFile,
   onSelectFile,
 }: {
   step: RenderStep;
+  fixtureRuns: TestFixtureRun[];
   selectedFile: string | null;
   onSelectFile: (file: string) => void;
 }): ReactNode {
-  const fixtureRuns = step.testRun?.fixtureRuns ?? [];
   return <div className="checks">
     <section className="check-group test-results">
       <div className="eyebrow">Tests</div>
@@ -792,7 +806,7 @@ function ImplementationStep({
       {(step.sections ?? []).map((section, index) => <section className="implementation-section" key={index}>
         <div className="test-area-heading">
           <h3>{section.name}</h3>
-          <span className="test-type-badge">{section.priority === "critical" ? "Critical" : "Secondary"}</span>
+          <span className={classNames("test-type-badge", section.priority === "critical" && "critical-badge")}>{section.priority === "critical" ? "Critical" : "Secondary"}</span>
         </div>
         <Markdown source={section.description} files={allStepFiles(step)} onSelectFile={onSelectFile} />
         {section.priority === "secondary"
@@ -856,7 +870,9 @@ function DetailPanel({
   source,
   selectedFile,
   onSelectFile,
-  openFiles,
+  tabs,
+  onReorderTab,
+  fixtureRuns,
   onCloseFile,
   scrollTarget,
   detailWidth,
@@ -868,7 +884,9 @@ function DetailPanel({
   onResizeKeyDown,
 }: StepViewProps & {
   source: RenderModel["source"];
-  openFiles: string[];
+  tabs: string[];
+  onReorderTab: (from: string, to: string) => void;
+  fixtureRuns: TestFixtureRun[];
   onCloseFile: (file: string) => void;
   scrollTarget: DiffTarget | null;
   detailWidth: number;
@@ -879,10 +897,53 @@ function DetailPanel({
   onResizePointerUp: (event: PointerEvent<HTMLDivElement>) => void;
   onResizeKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
 }): ReactNode {
+  const [draggingTab, setDraggingTab] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const resetDrag = () => { setDraggingTab(null); setDropTarget(null); };
+  const dragHandlers = (tab: string) => ({
+    draggable: true,
+    onDragStart: (event: DragEvent<HTMLElement>) => {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", tab || "Step summary");
+      setDraggingTab(tab);
+    },
+    onDragOver: (event: DragEvent<HTMLElement>) => {
+      if (draggingTab === null) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      setDropTarget(tab);
+    },
+    onDrop: (event: DragEvent<HTMLElement>) => {
+      if (draggingTab === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onReorderTab(draggingTab, tab);
+      resetDrag();
+    },
+    onDragEnd: resetDrag,
+  });
+  const moveWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>, tab: string) => {
+    if (!event.altKey || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault();
+    const neighbor = tabs[tabs.indexOf(tab) + (event.key === "ArrowLeft" ? -1 : 1)];
+    if (neighbor !== undefined) onReorderTab(tab, neighbor);
+  };
+  const toggle = <button
+    key="details-toggle"
+    aria-expanded={!collapsed}
+    aria-label={collapsed ? "Expand details panel" : "Collapse details panel"}
+    className={classNames("panel-toggle", collapsed ? "detail-toggle-floating" : "detail-toggle")}
+    onClick={onToggle}
+    title={collapsed ? "Expand details panel" : "Collapse details panel"}
+  >{collapsed
+    ? <PanelRightOpen aria-hidden="true" size={16} />
+    : <PanelRightClose aria-hidden="true" size={16} />}
+  </button>;
+  if (collapsed) return toggle;
   const selected = allStepFiles(step).find((file) => file.path === selectedFile);
   const selectedGitHubUrl = selected ? githubFileUrl(source, selected) : null;
-  return <aside className={classNames("detail-panel", collapsed && "collapsed")}>
-    {!collapsed && <div
+  return <aside className="detail-panel">
+    <div
       aria-label="Resize details panel"
       aria-orientation="vertical"
       aria-valuemax={720}
@@ -896,44 +957,60 @@ function DetailPanel({
       onPointerCancel={onResizePointerUp}
       role="separator"
       tabIndex={0}
-    />}
+    />
     <div className="detail-header">
-      {!collapsed && <div className="detail-tabs" role="tablist" aria-label="Review details">
-        <button
+      <div className="detail-tabs" role="tablist" aria-label="Review details"
+        onDragOver={(event) => {
+          if (draggingTab === null) return;
+          event.preventDefault();
+          const bounds = event.currentTarget.getBoundingClientRect();
+          if (event.clientX < bounds.left + 32) event.currentTarget.scrollLeft -= 16;
+          if (event.clientX > bounds.right - 32) event.currentTarget.scrollLeft += 16;
+        }}
+        onDrop={(event) => {
+          if (draggingTab === null) return;
+          event.preventDefault();
+          onReorderTab(draggingTab, tabs.at(-1)!);
+          resetDrag();
+        }}
+      >
+        {tabs.map((file) => file === "" ? <button
+          {...dragHandlers(file)}
+          key={file}
           aria-selected={selectedFile === null}
-          className={classNames("detail-tab", "summary-tab", selectedFile === null && "active")}
+          aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
+          aria-description="Drag to reorder, or press Alt and an arrow key."
+          className={classNames("detail-tab", "summary-tab", selectedFile === null && "active", draggingTab === file && "tab-dragging", dropTarget === file && "tab-drop-target")}
           onClick={() => onSelectFile("")}
+          onKeyDown={(event) => moveWithKeyboard(event, file)}
           role="tab"
-        >Step summary</button>
-        {openFiles.map((file) => <div className={classNames("file-tab", selectedFile === file && "active")} key={file}>
+        >Step summary</button> : <div
+          {...dragHandlers(file)}
+          className={classNames("file-tab", selectedFile === file && "active", draggingTab === file && "tab-dragging", dropTarget === file && "tab-drop-target")}
+          key={file}
+        >
           <button
             aria-selected={selectedFile === file}
+            aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
+            aria-description="Drag to reorder, or press Alt and an arrow key."
             onClick={() => onSelectFile(file)}
+            onKeyDown={(event) => moveWithKeyboard(event, file)}
             role="tab"
             title={file}
           >{file.split("/").at(-1)}</button>
           <button aria-label={`Close ${file}`} className="close-tab" onClick={() => onCloseFile(file)} title={`Close ${file}`}><X aria-hidden="true" size={13} /></button>
         </div>)}
-      </div>}
-      <button
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? "Expand details panel" : "Collapse details panel"}
-        className="panel-toggle detail-toggle"
-        onClick={onToggle}
-        title={collapsed ? "Expand details panel" : "Collapse details panel"}
-      >{collapsed
-        ? <PanelRightOpen aria-hidden="true" size={16} />
-        : <PanelRightClose aria-hidden="true" size={16} />}
-      </button>
+      </div>
+      {toggle}
     </div>
-    {!collapsed && selectedFile === null && <div className="detail-panel-content">
-      <Checks step={step} selectedFile={selectedFile} onSelectFile={onSelectFile} />
+    {selectedFile === null && <div className="detail-panel-content">
+      <Checks step={step} fixtureRuns={fixtureRuns} selectedFile={selectedFile} onSelectFile={onSelectFile} />
       {step.fileDiffs.length > 0 && <section className="changed-files">
         <div className="eyebrow">Files in this step</div>
         <div className="file-pills">{step.fileDiffs.map((file) => <FileLink file={file.path} active={false} onSelect={onSelectFile} key={file.path} />)}</div>
       </section>}
     </div>}
-    {!collapsed && selected && <div className="detail-panel-content file-tab-content">
+    {selected && <div className="detail-panel-content file-tab-content">
       <div className="tab-diff">
         <DiffView
           filePath={selected.path}
@@ -962,7 +1039,7 @@ export function ReviewViewer({
   const [stepIndex, setStepIndex] = useState(0);
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [detailWidth, setDetailWidth] = useState(420);
-  const [openFiles, setOpenFiles] = useState<string[]>([]);
+  const [tabs, setTabs] = useState<string[]>([""]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [scrollTarget, setScrollTarget] = useState<DiffTarget | null>(null);
   const [detailPreferencesLoaded, setDetailPreferencesLoaded] = useState(false);
@@ -1004,14 +1081,26 @@ export function ReviewViewer({
       setScrollTarget(null);
       return;
     }
-    setOpenFiles((files) => files.includes(file) ? files : [...files, file]);
+    setTabs((files) => files.includes(file) ? files : [...files, file]);
     setSelectedFile(file);
     setScrollTarget(target ? { ...target } : null);
     setRightCollapsed(false);
   };
 
+  const reorderTab = (from: string, to: string) => {
+    setTabs((current) => {
+      const fromIndex = current.indexOf(from);
+      const toIndex = current.indexOf(to);
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return current;
+      const reordered = [...current];
+      reordered.splice(fromIndex, 1);
+      reordered.splice(toIndex, 0, from);
+      return reordered;
+    });
+  };
+
   const closeFile = (file: string) => {
-    setOpenFiles((files) => files.filter((candidate) => candidate !== file));
+    setTabs((files) => files.filter((candidate) => candidate !== file));
     if (selectedFile === file) {
       setSelectedFile(null);
       setScrollTarget(null);
@@ -1041,7 +1130,7 @@ export function ReviewViewer({
         return;
       }
     }
-    setOpenFiles([]);
+    setTabs([""]);
     setSelectedFile(null);
     setScrollTarget(null);
     stepContentRef.current?.scrollTo({ top: 0 });
@@ -1066,8 +1155,9 @@ export function ReviewViewer({
     <div
       className="workspace"
       style={{
-        gridTemplateColumns: `276px minmax(480px, 1fr) ${rightCollapsed ? 52 : detailWidth}px`,
-      }}
+        gridTemplateColumns: `276px minmax(480px, 1fr)${rightCollapsed ? "" : ` ${detailWidth}px`}`,
+        "--detail-width": `${rightCollapsed ? 0 : detailWidth}px`,
+      } as CSSProperties}
     >
       <nav className="step-nav" aria-label="Narrative steps">
         {data.steps.map((item, index) => {
@@ -1104,7 +1194,9 @@ export function ReviewViewer({
         source={data.source}
         selectedFile={selectedFile}
         onSelectFile={openFile}
-        openFiles={openFiles}
+        tabs={tabs}
+        onReorderTab={reorderTab}
+        fixtureRuns={newestFixtureRuns(data.steps, stepIndex)}
         onCloseFile={closeFile}
         scrollTarget={scrollTarget}
         detailWidth={detailWidth}

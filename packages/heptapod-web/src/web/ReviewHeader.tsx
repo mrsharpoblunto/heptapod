@@ -80,9 +80,7 @@ export function ReviewHeader({
   const githubMetadata = useGitHubPullRequestMetadata(review.id, Boolean(review.sourceUrl));
   const title = compact
     ? <h2>{review.title}</h2>
-    : review.sourceUrl
-      ? <a className="review-title" href={review.sourceUrl} target="_blank" rel="noreferrer"><strong>{review.title}</strong></a>
-      : <strong>{review.title}</strong>;
+    : <strong className="review-title">{review.title}</strong>;
 
   const heading = <div className={`review-heading${compact ? " review-heading-compact" : ""}`}>
     {!compact && <Link className="review-back-link" href="/" aria-label="Back to reviews" title="Back to reviews">
