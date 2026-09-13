@@ -255,6 +255,7 @@
   .file-link-label { @apply truncate text-xs font-semibold text-[var(--fg)]; }
   .file-link-path { @apply flex max-w-full min-w-0 whitespace-nowrap font-mono text-[11px] text-[var(--fg-muted)]; }
   .file-link-directory { @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap; flex: 1 1000000 auto; }
+  .file-link-move-arrow { @apply shrink-0 whitespace-pre; }
   .file-link-filename { @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--fg)]; flex: 0 1 auto; }
   .before-after { @apply my-3 grid grid-cols-2 gap-2; }
   .before-after > div > span { @apply mb-1 block text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--fg-muted)]; }
@@ -281,7 +282,6 @@
   .inline-diff-toggle { @apply flex cursor-pointer items-center justify-center rounded-tr-md border border-l-0 border-[var(--border)] bg-[var(--canvas-subtle)] text-[var(--fg-muted)] hover:bg-[var(--canvas-inset)] hover:text-[var(--fg)]; }
   .inline-diff-toggle.collapsed { @apply rounded-br-md; }
   .diff-shell { @apply min-w-0; }
-  .moved-file-title { @apply break-all rounded-t-md border border-b-0 border-[var(--border)] bg-[var(--canvas-subtle)] px-3 py-2 font-mono text-xs; }
   .moved-file-content { @apply rounded-t-none p-6 text-center text-[var(--fg-muted)]; }
   .diff { @apply overflow-auto rounded-b-md border border-t-0 border-[var(--border)] bg-[var(--canvas)] font-mono text-xs leading-[1.55]; }
   .diff-line { @apply grid min-h-[17px] grid-cols-[42px_42px_minmax(max-content,1fr)]; }

@@ -26,15 +26,14 @@ vi.mock("../src/web/GitHubIdentity", async (importOriginal) => ({
 const base = "1111111111111111111111111111111111111111";
 const head = "2222222222222222222222222222222222222222";
 
-test("rename widgets show both paths and a moved message without raw metadata", () => {
+test("rename widgets show only the moved message", () => {
   const markup = renderToStaticMarkup(createElement(DiffView, {
     filePath: "new name.ts", compact: true,
     patch: "diff --git a/old name.ts b/new name.ts\nsimilarity index 100%\nrename from old name.ts\nrename to new name.ts\n",
     beforeContent: "content\n", afterContent: "content\n",
   }));
-  assert.match(markup, /old name.ts -&gt; new name.ts/);
   assert.match(markup, />file moved</);
-  assert.doesNotMatch(markup, /diff --git|similarity index|rename from|diff-lines|line-number/);
+  assert.doesNotMatch(markup, /old name.ts|new name.ts|moved-file-title|diff --git|similarity index|rename from|diff-lines|line-number/);
 });
 
 test("supporting files and test cases use moved indicators instead of additions", () => {

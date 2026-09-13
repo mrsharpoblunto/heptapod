@@ -378,7 +378,6 @@ export function buildDiffSegments(
 export function DiffView(props: Parameters<typeof SourceDiffView>[0]): ReactNode {
   const rename = patchRename(props.patch);
   if (rename) return <div className="diff-shell moved-file">
-    <div className="moved-file-title">{rename.from} {"->"} {rename.to}</div>
     <div className="diff moved-file-content">file moved</div>
   </div>;
   return <SourceDiffView {...props} />;
@@ -764,7 +763,7 @@ function FileLink({
     <span className="file-link-copy">
       {label && <span className="file-link-label">{label}</span>}
       <span className="file-link-path">
-        {movedFrom && <span className="file-link-directory">{movedFrom} {"->"} </span>}
+        {movedFrom && <><span className="file-link-directory">{movedFrom}</span><span className="file-link-move-arrow">{" -> "}</span></>}
         {directory && <span className="file-link-directory">{directory}</span>}
         <strong className="file-link-filename">{filename}</strong>
       </span>
