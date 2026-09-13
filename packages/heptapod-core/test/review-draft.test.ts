@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, test } from "vitest";
 import { buildReviewDraftPreview, translateLine } from "../src/tool/review-draft.js";
-import { claimReviewDraftPublication, deleteReview, finishReviewDraftPublication, getReviewDraft, recordGitHubDraft, saveReviewDraft, upsertReview } from "../src/tool/database.js";
+import { beginReviewUpdate, claimReviewDraftPublication, deleteReview, failReviewIngestion, finishReviewDraftPublication, getReviewDraft, recordGitHubDraft, saveReviewDraft, upsertReview } from "../src/tool/database.js";
 import type { RenderModel, ReviewComment } from "../src/tool/types.js";
 
 const directories: string[] = [];
@@ -65,7 +66,7 @@ test("marks ranges missing from the PR and stale revisions as unpublishable", ()
   assert.equal(preview.threads[0].line, undefined);
 });
 
-test("persists comments, rejects stale saves, preserves drafts across ingestion, and deletes them with their review", () => {
+test("persists comments, rejects stale saves, and deletes drafts with their review", () => {
   const directory = mkdtempSync(join(tmpdir(), "heptapod-draft-")); directories.push(directory);
   const database = join(directory, "reviews.sqlite");
   upsertReview("42", model, database);
@@ -74,8 +75,6 @@ test("persists comments, rejects stale saves, preserves drafts across ingestion,
   assert.deepEqual(getReviewDraft("42", database).comments, [codeComment]);
   assert.equal(saved.version, draft.version + 1);
   assert.throws(() => saveReviewDraft("42", draft.version, "Lost update", [], database), /another tab/);
-  upsertReview("42", model, database);
-  assert.equal(getReviewDraft("42", database).summary, "Final summary");
   claimReviewDraftPublication("42", saved.version, database);
   assert.throws(() => claimReviewDraftPublication("42", saved.version, database), /already being published/);
   assert.throws(() => saveReviewDraft("42", saved.version, "changed", [], database), /being published/);
@@ -88,6 +87,43 @@ test("persists comments, rejects stale saves, preserves drafts across ingestion,
   deleteReview("42", database);
   upsertReview("42", model, database);
   assert.deepEqual(getReviewDraft("42", database).comments, []);
+});
+
+test.each([model.source.head, "d".repeat(40)])("successful updates clear the local draft and reject stale saves with head %s", (head) => {
+  const directory = mkdtempSync(join(tmpdir(), "heptapod-draft-reset-")); directories.push(directory);
+  const database = join(directory, "reviews.sqlite");
+  upsertReview("42", model, database);
+  upsertReview("43", model, database);
+  const draft = getReviewDraft("42", database);
+  const saved = saveReviewDraft("42", draft.version, "Pending summary", [codeComment], database, true);
+  const other = getReviewDraft("43", database);
+  const otherSaved = saveReviewDraft("43", other.version, "Keep this summary", [codeComment], database);
+
+  assert.equal(beginReviewUpdate("42", database), true);
+  failReviewIngestion("42", "Update failed", database);
+  const db = new DatabaseSync(database);
+  try {
+    const row = db.prepare("SELECT summary, comments_json FROM review_drafts WHERE review_id = ?").get("42")!;
+    assert.equal(row.summary, saved.summary);
+    assert.deepEqual(JSON.parse(row.comments_json as string), [codeComment]);
+  } finally { db.close(); }
+
+  assert.equal(beginReviewUpdate("42", database), true);
+  upsertReview("42", { ...model, source: { ...model.source, head } }, database);
+  const fresh = getReviewDraft("42", database);
+  assert.notEqual(fresh.id, saved.id);
+  assert.equal(fresh.head, head);
+  assert.equal(fresh.version, saved.version + 1);
+  assert.equal(fresh.summary, "");
+  assert.equal(fresh.summaryIsCombined, false);
+  assert.deepEqual(fresh.comments, []);
+  assert.equal(fresh.githubReviewId, null);
+  assert.equal(fresh.githubUrl, null);
+  assert.equal(fresh.publishedAt, null);
+  assert.equal(fresh.publishing, false);
+  assert.throws(() => saveReviewDraft("42", saved.version, saved.summary, saved.comments, database), /another tab/);
+  assert.deepEqual(getReviewDraft("43", database), otherSaved);
+  assert.equal(saveReviewDraft("42", fresh.version, "New feedback", [codeComment], database).summary, "New feedback");
 });
 
 test("rejects drafts for non-GitHub reviews and invalid comment anchors", () => {

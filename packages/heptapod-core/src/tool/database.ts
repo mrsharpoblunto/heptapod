@@ -290,6 +290,7 @@ export function upsertReview(id: string, payload: RenderModel, databasePath?: st
   const database = openDatabase(databasePath);
   const now = new Date().toISOString();
   try {
+    database.exec("BEGIN IMMEDIATE;");
     database.prepare(`
       INSERT INTO reviews (
         id, title, summary, source_url, base_revision, head_revision,
@@ -317,9 +318,19 @@ export function upsertReview(id: string, payload: RenderModel, databasePath?: st
       now,
       now,
     );
+    // A completed import starts a fresh draft. Keep versions increasing so an old
+    // tab cannot restore cleared comments, even when the PR head is unchanged.
+    database.prepare(`UPDATE review_drafts SET id = ?, head = ?, version = version + 1,
+      summary = '', summary_is_combined = 0, comments_json = '[]', github_review_id = NULL,
+      github_url = NULL, published_at = NULL, publishing_until = 0 WHERE review_id = ?`)
+      .run(randomUUID(), payload.source.head, id);
     const review = getReviewFromDatabase(database, id);
     if (!review) throw new Error(`Review ${id} was not stored.`);
+    database.exec("COMMIT;");
     return review as ReadyStoredReview;
+  } catch (error) {
+    if (database.isTransaction) database.exec("ROLLBACK;");
+    throw error;
   } finally {
     database.close();
   }
@@ -365,7 +376,8 @@ export function listReviews(databasePath?: string): StoredReview[] {
   const database = openDatabase(databasePath);
   try {
     const rows = database
-      .prepare("SELECT * FROM reviews ORDER BY updated_at DESC")
+      // Progress and refreshes change updated_at; keep reviews in their original import order.
+      .prepare("SELECT * FROM reviews ORDER BY created_at DESC, id ASC")
       .all() as unknown as ReviewRow[];
     return rows.map(rowToReview);
   } finally {

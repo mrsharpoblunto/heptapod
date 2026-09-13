@@ -1592,7 +1592,7 @@ export function ReviewViewer({
     document.title = `${finalReview ? "Review" : `${step.number}. ${step.title}`} — ${data.title}`;
   }, [data.steps, data.title, step, finalReview, githubReview, githubMetadataLoading]);
 
-  return <ReviewCommentsProvider disabled={mobile} key={`${reviewId ?? data.source.base}:${data.source.head}`} model={data} reviewId={reviewId ?? String(data.source.github?.number ?? "")} step={step} updating={currentStatus.status !== "ready"} renderMarkdown={(source) => <Markdown source={source} annotatable={false} />}><ReviewRuntimeContext.Provider value={{ reviewId, editorLinks: data.editorLinks, source: data.source }}><div className={`app-shell${isUpdating ? " app-shell-updating" : ""}${mobile && mobilePanel ? ` mobile-${mobilePanel}-open` : ""}`}>
+  return <ReviewCommentsProvider disabled={mobile} key={`${reviewId ?? data.source.base}:${data.source.head}:${updatedAt}`} model={data} reviewId={reviewId ?? String(data.source.github?.number ?? "")} step={step} updating={currentStatus.status !== "ready"} renderMarkdown={(source) => <Markdown source={source} annotatable={false} />}><ReviewRuntimeContext.Provider value={{ reviewId, editorLinks: data.editorLinks, source: data.source }}><div className={`app-shell${isUpdating ? " app-shell-updating" : ""}${mobile && mobilePanel ? ` mobile-${mobilePanel}-open` : ""}`}>
     <header className="topbar" inert={mobile && mobilePanel !== null}>
       <ReviewHeader review={{
         id: reviewId ?? `${data.source.base}/${data.source.head}`,
