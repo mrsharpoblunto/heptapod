@@ -11,6 +11,7 @@ import {
   FoldVertical,
   Maximize2,
   Menu,
+  MessageSquare,
   Minimize2,
   Minus,
   PanelRightClose,
@@ -1259,6 +1260,17 @@ function subscribeMobileReview(onChange: () => void) {
 function isMobileReview() { return window.matchMedia(mobileReviewQuery).matches; }
 function desktopReviewSnapshot() { return false; }
 
+function StepIndex({ stepId, number }: { stepId: string; number: number }) {
+  const comments = useReviewComments();
+  const hasComments = comments?.state?.draft.comments.some((comment) => comment.target.stepId === stepId && comment.body.trim());
+  return <span className="step-index">
+    <span className="step-number">{String(number).padStart(2, "0")}</span>
+    {hasComments && <span className="step-comment-indicator" role="img" aria-label="This step has comments" title="This step has comments">
+      <MessageSquare size={14} aria-hidden="true" />
+    </span>}
+  </span>;
+}
+
 export function ReviewViewer({
   data,
   reviewId,
@@ -1471,7 +1483,7 @@ export function ReviewViewer({
         <div className="mobile-panel-header"><strong>Review steps</strong><button aria-label="Close review steps" onClick={() => setMobilePanel(null)}><X size={22} aria-hidden="true" /></button></div>
         {data.steps.map((item, index) => {
           return <button className={classNames("step-button", index === stepIndex && "active")} onClick={() => selectStep(item.id)} key={item.id}>
-            <span className="step-number">{String(index + 1).padStart(2, "0")}</span>
+            <StepIndex stepId={item.id} number={index + 1} />
             <span className="step-copy"><span>{item.title}</span><small>{kindLabel(item.kind)}</small></span>
             <span className={classNames(
               "step-dot",

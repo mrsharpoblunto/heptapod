@@ -156,6 +156,8 @@
   }
   .step-button:hover { @apply bg-[var(--canvas-inset)]; }
   .step-button.active { @apply border-[var(--border)] bg-[var(--canvas)] shadow-[var(--shadow)]; }
+  .step-index { @apply flex flex-col items-start self-stretch; }
+  .step-comment-indicator { @apply flex flex-1 items-center text-[var(--accent)]; }
   .step-number { @apply pt-px font-mono text-[11px] text-[var(--fg-muted)]; }
   .step-copy { @apply flex min-w-0 flex-col; }
   .step-copy > span { @apply text-[13px] font-semibold leading-[1.35]; }
@@ -274,7 +276,7 @@
   .implementation-section { @apply min-w-0 border-b border-[var(--border)] pb-6 last:border-b-0; }
   .implementation-section > .markdown { @apply mt-2 mb-4; }
   .focused-diff { @apply mt-4; }
-  .connected-file-header { @apply grid grid-cols-[minmax(0,1fr)_40px]; }
+  .connected-file-header { @apply sticky -top-9 z-10 grid grid-cols-[minmax(0,1fr)_40px] rounded-t-md bg-[var(--canvas)]; }
   .connected-file-header .file-link { @apply w-full rounded-r-none; }
   .inline-diff-toggle { @apply flex cursor-pointer items-center justify-center rounded-tr-md border border-l-0 border-[var(--border)] bg-[var(--canvas-subtle)] text-[var(--fg-muted)] hover:bg-[var(--canvas-inset)] hover:text-[var(--fg)]; }
   .inline-diff-toggle.collapsed { @apply rounded-br-md; }
@@ -545,6 +547,7 @@
   .workspace { grid-template-columns: minmax(0, 1fr) !important; }
   .main-panel { min-width: 0; }
   .step-content { padding: 68px 28px 96px; }
+  .connected-file-header { top: -68px; }
   .step-heading h1 { font-size: 27px; }
   .step-pager { left: 0; right: 0; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
   .step-nav, .detail-panel, .detail-toggle-floating { display: none; }
@@ -613,6 +616,7 @@
   .step-nav, .detail-panel, .step-pager { @apply hidden; }
   .main-panel { @apply block overflow-visible; }
   .step-content { @apply overflow-visible; }
+  .connected-file-header { position: static; }
 }
 
 .comment-anchor { position: relative; min-width: 0; }
