@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import {
   createContext,
+  memo,
   Fragment,
   useEffect,
   useContext,
@@ -56,9 +57,10 @@ import {
   GitHubIcon,
   useCachedGitHubPullRequestMetadata,
 } from "./GitHubIdentity";
+import { codeCommentLocations, sameCommentLocations } from "./review-comment-store";
 import { ReviewHeader } from "./ReviewHeader";
 import { ReviewProgress, type ReviewStatus } from "./ReviewProgress";
-import { AnnotatedMarkdown, CodeCommentBlock, CommentAnchor, FinalReview, ReviewCommentsProvider, useReviewComments } from "./ReviewComments";
+import { AnnotatedMarkdown, CodeCommentBlock, CommentAnchor, FinalReview, ReviewCommentsProvider, useReviewComments, useReviewActions, useReviewSelection, useReviewLocked } from "./ReviewComments";
 
 function classNames(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -105,6 +107,10 @@ function highlightedHtml(source: string, language?: string): string {
       .replaceAll(">", "&gt;");
   }
 }
+
+const HighlightedDiffCode = memo(function HighlightedDiffCode({ content, language }: { content: string; language: string | undefined }) {
+  return <span className="hljs" dangerouslySetInnerHTML={{ __html: highlightedHtml(content, language) }} />;
+});
 
 function HighlightedCode({ source, language }: { source: string; language?: string }): ReactNode {
   return <code className="hljs" dangerouslySetInnerHTML={{ __html: highlightedHtml(source, language) }} />;
@@ -380,8 +386,10 @@ export function DiffView(props: Parameters<typeof SourceDiffView>[0]): ReactNode
   if (rename) return <div className="diff-shell moved-file">
     <div className="diff moved-file-content">file moved</div>
   </div>;
-  return <SourceDiffView {...props} />;
+  return <MemoizedSourceDiffView {...props} />;
 }
+
+const MemoizedSourceDiffView = memo(SourceDiffView);
 
 function SourceDiffView({
   filePath,
@@ -405,10 +413,11 @@ function SourceDiffView({
   snippetRange?: { side: "LEFT" | "RIGHT"; startLine: number; endLine: number };
 }): ReactNode {
   const containerRef = useRef<HTMLDivElement>(null);
-  const comments = useReviewComments();
+  const comments = useReviewActions();
+  const locked = useReviewLocked();
   const annotationStep = commentStepId ?? comments?.step.id;
-  const canComment = Boolean(!snippetRange && comments?.model.source.files?.some((file) => file.path === filePath) && !comments.locked);
-  const codeComments = snippetRange ? [] : comments?.state?.draft.comments.filter((comment) => comment.target.kind === "line" && comment.target.stepId === annotationStep && comment.target.path === filePath) ?? [];
+  const canComment = Boolean(!snippetRange && comments?.model.source.files?.some((file) => file.path === filePath) && !locked);
+  const codeComments = useReviewSelection((snapshot) => snippetRange ? [] : codeCommentLocations(snapshot, annotationStep, filePath), sameCommentLocations);
   const [commentRange, setCommentRange] = useState<{ side: "LEFT" | "RIGHT"; start: number; end: number } | null>(null);
   const dragRange = useRef<typeof commentRange>(null);
   const [expandedGaps, setExpandedGaps] = useState<Set<string>>(() => new Set());
@@ -536,8 +545,8 @@ function SourceDiffView({
         : pureDeletion
           ? lineNumber(line.old, "LEFT")
           : <>{lineNumber(line.old, "LEFT")}{lineNumber(line.next, "RIGHT")}</>}
-      <code>{marker && <span className="diff-marker">{marker}</span>}<span className="hljs" dangerouslySetInnerHTML={{ __html: highlightedHtml(content, language) }} /></code>
-    </div>{codeComments.filter(({ target }) => target.kind === "line" && target.endLine === (target.side === "LEFT" ? line.old : line.next)).map((comment) => <CodeCommentBlock comment={comment} key={comment.id} />)}</Fragment>;
+      <code>{marker && <span className="diff-marker">{marker}</span>}<HighlightedDiffCode content={content} language={language} /></code>
+    </div>{codeComments.filter(({ target }) => target.kind === "line" && target.endLine === (target.side === "LEFT" ? line.old : line.next)).map((comment) => <CodeCommentBlock commentId={comment.id} key={comment.id} />)}</Fragment>;
   };
   const gaps = segments.filter((segment): segment is Extract<DiffSegment, { kind: "gap" }> => segment.kind === "gap");
   const globalActions = <div className="diff-global-actions">
@@ -644,7 +653,7 @@ function TestFixtureResult({
   active: boolean;
   onSelectFile: (file: string) => void;
 }): ReactNode {
-  const review = useReviewComments();
+  const review = useReviewActions();
   const [expanded, setExpanded] = useState(false);
   const separator = run.file.lastIndexOf("/");
   const directory = separator === -1 ? "" : run.file.slice(0, separator + 1);
@@ -745,7 +754,7 @@ function FileLink({
   inline?: boolean;
   change?: TestCaseChangeKind;
 }): ReactNode {
-  const review = useReviewComments();
+  const review = useReviewActions();
   const patch = review?.step.fileDiffs.find((candidate) => candidate.path === file)?.patch;
   const movedFrom = from ?? (patch ? patchRename(patch)?.from : undefined);
   if (movedFrom) change = "moved";
@@ -1246,7 +1255,7 @@ function ReviewThread({ comment, model, onSelectFile }: { comment: ReviewComment
   return <><header><FileLink file={target.path} active={false} annotatable={false}
     onSelect={(path) => onSelectFile(path, stepIndex, location)} /></header>
     {target.kind === "line" && file && <DiffView filePath={target.path} patch={file.patch} beforeContent={file.beforeContent} afterContent={file.afterContent} snippetRange={target} />}
-    <CodeCommentBlock comment={comment} autofocus={false} />
+    <CodeCommentBlock commentId={comment.id} autofocus={false} />
   </>;
 }
 
@@ -1260,8 +1269,7 @@ function isMobileReview() { return window.matchMedia(mobileReviewQuery).matches;
 function desktopReviewSnapshot() { return false; }
 
 function StepIndex({ stepId, number }: { stepId: string; number: number }) {
-  const comments = useReviewComments();
-  const hasComments = comments?.state?.draft.comments.some((comment) => comment.target.stepId === stepId && comment.body.trim());
+  const hasComments = useReviewSelection((snapshot) => Boolean(snapshot.state?.draft.comments.some((comment) => comment.target.stepId === stepId && comment.body.trim())), Object.is);
   return <span className="step-index">
     <span className="step-number">{String(number).padStart(2, "0")}</span>
     {hasComments && <span className="step-comment-indicator" role="img" aria-label="This step has comments" title="This step has comments">
