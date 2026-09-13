@@ -1,15 +1,23 @@
 import type { PatchFile, PatchStats } from "./types.js";
 
-function decodeGitPath(value: string): string | null {
+function decodeGitPath(value: string, stripPrefix = true): string | null {
   let text = value.trim();
   if (text === "/dev/null") return null;
   if (text.startsWith('"') && text.endsWith('"')) {
     text = text.slice(1, -1).replace(/(?:\\[0-7]{1,3})+|\\([abfnrtv\\"])/g, (match: string, escape: string | undefined) => {
-      if (escape === undefined) return Buffer.from(match.split("\\").slice(1).map((octal) => Number.parseInt(octal, 8))).toString("utf8");
+      if (escape === undefined) return new TextDecoder().decode(Uint8Array.from(match.split("\\").slice(1).map((octal) => Number.parseInt(octal, 8))));
       return { a: "\x07", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", "\\": "\\", '"': '"' }[escape] ?? escape;
     });
   }
-  return text.replace(/^[ab]\//, "");
+  return stripPrefix ? text.replace(/^[ab]\//, "") : text;
+}
+
+export function patchRename(patch: string): { from: string; to: string } | null {
+  const header = patch.split(/^@@/m, 1)[0];
+  const from = header.match(/^rename from (.+)$/m)?.[1];
+  const to = header.match(/^rename to (.+)$/m)?.[1];
+  if (!from || !to) return null;
+  return { from: decodeGitPath(from, false)!, to: decodeGitPath(to, false)! };
 }
 
 function pathFromSection(section: string): string {
@@ -49,7 +57,8 @@ export function splitPatchFiles(patch: string): PatchFile[] {
   while ((match = expression.exec(patch)) !== null) starts.push(match.index);
   return starts.map((start, index) => {
     const text = patch.slice(start, starts[index + 1] ?? patch.length).replace(/\n+$/, "\n");
-    return { path: pathFromSection(text), patch: text };
+    const rename = patchRename(text);
+    return { path: rename?.to ?? pathFromSection(text), patch: text, ...(rename && { from: rename.from }) };
   });
 }
 

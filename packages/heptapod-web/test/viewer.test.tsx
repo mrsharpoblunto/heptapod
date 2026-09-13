@@ -26,6 +26,35 @@ vi.mock("../src/web/GitHubIdentity", async (importOriginal) => ({
 const base = "1111111111111111111111111111111111111111";
 const head = "2222222222222222222222222222222222222222";
 
+test("rename widgets show both paths and a moved message without raw metadata", () => {
+  const markup = renderToStaticMarkup(createElement(DiffView, {
+    filePath: "new name.ts", compact: true,
+    patch: "diff --git a/old name.ts b/new name.ts\nsimilarity index 100%\nrename from old name.ts\nrename to new name.ts\n",
+    beforeContent: "content\n", afterContent: "content\n",
+  }));
+  assert.match(markup, /old name.ts -&gt; new name.ts/);
+  assert.match(markup, />file moved</);
+  assert.doesNotMatch(markup, /diff --git|similarity index|rename from|diff-lines|line-number/);
+});
+
+test("supporting files and test cases use moved indicators instead of additions", () => {
+  const path = "new.test.js";
+  const file = { path, patch: "diff --git a/old.test.js b/new.test.js\nsimilarity index 100%\nrename from old.test.js\nrename to new.test.js\n", beforeContent: null, afterContent: "test\n" };
+  const step: RenderModel["steps"][number] = {
+    ...data.steps[0], kind: "implementation", body: "", referenceFiles: [], testRun: undefined, fileDiffs: [file],
+    sections: [{ name: "Support", priority: "secondary", description: "Relocate the fixture", files: [{ file: path, label: "Fixture", change: "added" }] }],
+  };
+  const render = (step: RenderModel["steps"][number]) => renderToStaticMarkup(createElement(ReviewViewer, { data: { ...data, steps: [step] }, updatedAt: "2026-09-12" }));
+  const supporting = render(step);
+  assert.match(supporting, /test-case-moved/);
+  assert.match(supporting, /aria-label="moved"/);
+  assert.match(supporting, /old.test.js -&gt; new.test.js/);
+  assert.doesNotMatch(supporting, /test-case-added|aria-label="added"/);
+  const tests = render({ ...step, kind: "tests", sections: undefined, testAreas: [{ name: "Fixture", description: "Move tests", files: [{ path, cases: [{ name: "stable", change: "added", newLine: 1 }] }] }] });
+  assert.match(tests, /aria-label="moved test: stable"/);
+  assert.doesNotMatch(tests, /test-case-added|aria-label="added"/);
+});
+
 const data: RenderModel = {
   title: "Introduce bounded arithmetic",
   summary: "Specify clamping, implement it, and update the app.",

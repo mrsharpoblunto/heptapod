@@ -79,8 +79,8 @@ function validateFileReferences(
     }
     if ("file" in item && "change" in item && item.change !== undefined) {
       assert(
-        item.change === "added" || item.change === "removed" || item.change === "changed",
-        `${label}[${index}].change must be added, removed, or changed`,
+        item.change === "added" || item.change === "removed" || item.change === "changed" || item.change === "moved",
+        `${label}[${index}].change must be added, removed, changed, or moved`,
       );
     }
     if ("files" in item && item.files !== undefined) {

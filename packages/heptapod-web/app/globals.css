@@ -225,6 +225,7 @@
   .test-change-icon { @apply flex h-5 w-5 shrink-0 items-center justify-center rounded-full; }
   .test-case-added .test-change-icon { @apply bg-[var(--success-muted)] text-[var(--success)]; }
   .test-case-removed .test-change-icon { @apply bg-[var(--danger-muted)] text-[var(--danger)]; }
+  .test-case-moved .test-change-icon,
   .test-case-changed .test-change-icon { @apply bg-[var(--accent-muted)] text-[var(--accent)]; }
   .no-test-cases { @apply mt-2 px-1 text-xs; }
   .connected-empty-tests { @apply mt-0 rounded-b-md border border-t-0 border-[var(--border)] bg-[var(--canvas)] px-3 py-2; }
@@ -278,6 +279,8 @@
   .inline-diff-toggle { @apply flex cursor-pointer items-center justify-center rounded-tr-md border border-l-0 border-[var(--border)] bg-[var(--canvas-subtle)] text-[var(--fg-muted)] hover:bg-[var(--canvas-inset)] hover:text-[var(--fg)]; }
   .inline-diff-toggle.collapsed { @apply rounded-br-md; }
   .diff-shell { @apply min-w-0; }
+  .moved-file-title { @apply break-all rounded-t-md border border-b-0 border-[var(--border)] bg-[var(--canvas-subtle)] px-3 py-2 font-mono text-xs; }
+  .moved-file-content { @apply rounded-t-none p-6 text-center text-[var(--fg-muted)]; }
   .diff { @apply overflow-auto rounded-b-md border border-t-0 border-[var(--border)] bg-[var(--canvas)] font-mono text-xs leading-[1.55]; }
   .diff-line { @apply grid min-h-[17px] grid-cols-[42px_42px_minmax(max-content,1fr)]; }
   .diff-pure .diff-line { @apply grid-cols-[42px_minmax(max-content,1fr)]; }

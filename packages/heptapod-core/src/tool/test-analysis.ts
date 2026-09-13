@@ -22,7 +22,7 @@ function readTreeFile(repo: string, tree: string, path: string): string | null {
   return result.stdout.toString("utf8");
 }
 
-function compareTestCases(before: ParsedTestCase[], after: ParsedTestCase[]): ParsedTestCaseChange[] {
+function compareTestCases(before: ParsedTestCase[], after: ParsedTestCase[], moved = false): ParsedTestCaseChange[] {
   const beforeByName = new Map<string, ParsedTestCase[]>();
   const afterByName = new Map<string, ParsedTestCase[]>();
   for (const item of before) beforeByName.set(item.key, [...(beforeByName.get(item.key) ?? []), item]);
@@ -39,10 +39,10 @@ function compareTestCases(before: ParsedTestCase[], after: ParsedTestCase[]): Pa
       const newCase = newCases[index];
       if (!oldCase && newCase) changes.push({ name: newCase.name, change: "added", newLine: newCase.line, newEndLine: newCase.endLine, position: newCase.position });
       else if (oldCase && !newCase) changes.push({ name: oldCase.name, change: "removed", oldLine: oldCase.line, oldEndLine: oldCase.endLine, position: oldCase.position });
-      else if (oldCase && newCase && oldCase.fingerprint !== newCase.fingerprint) {
+      else if (oldCase && newCase && (moved || oldCase.fingerprint !== newCase.fingerprint)) {
         changes.push({
           name: newCase.name,
-          change: "changed",
+          change: oldCase.fingerprint !== newCase.fingerprint ? "changed" : "moved",
           oldLine: oldCase.line,
           oldEndLine: oldCase.endLine,
           newLine: newCase.line,
@@ -70,17 +70,19 @@ function analyzeTestStep(
   beforeTree: string,
   afterTree: string,
   format: FixtureFormat,
+  renames: Map<string, string>,
 ): TestAreaChange[] {
   return (step.cases ?? []).map((area) => ({
     name: area.name,
     description: area.description,
     files: area.files.map((path) => {
-      const before = analyzeTestFixture(readTreeFile(repo, beforeTree, path) ?? "", path, format);
+      const beforePath = renames.get(path) ?? path;
+      const before = analyzeTestFixture(readTreeFile(repo, beforeTree, beforePath) ?? "", beforePath, format);
       const after = analyzeTestFixture(readTreeFile(repo, afterTree, path) ?? "", path, format);
       return {
         path,
         isFixture: before.isFixture || after.isFixture,
-        cases: compareTestCases(before.cases, after.cases),
+        cases: compareTestCases(before.cases, after.cases, renames.has(path)),
       };
     }),
   }));
@@ -108,11 +110,12 @@ export function analyzeNarrative(
       const patch = step.diff ? readArtifact(manifestPath, step.diff) : null;
       if (patch) applyPatchToIndex(repo, env, patch, `${index + 1} (${step.id})`);
       const afterTree = stagedTree(repo, env);
+      const patchFiles = patch ? splitPatchFiles(patch.toString("utf8")) : [];
       if (patch) {
-        filesByStep.set(step.id, new Map(splitPatchFiles(patch.toString("utf8")).filter((file) => !generated.has(file.path)).map((file) => [
+        filesByStep.set(step.id, new Map(patchFiles.filter((file) => !generated.has(file.path)).map((file) => [
           file.path,
           {
-            beforeContent: readTreeFile(repo, beforeTree, file.path),
+            beforeContent: readTreeFile(repo, beforeTree, file.from ?? file.path),
             afterContent: readTreeFile(repo, afterTree, file.path),
           },
         ])));
@@ -128,7 +131,8 @@ export function analyzeNarrative(
         if (references.size > 0) referenceFilesByStep.set(step.id, references);
       }
       if (patch && step.kind === "tests") {
-        testAreasByStep.set(step.id, analyzeTestStep(repo, step, beforeTree, afterTree, format));
+        const renames = new Map(patchFiles.flatMap((file) => file.from ? [[file.path, file.from] as const] : []));
+        testAreasByStep.set(step.id, analyzeTestStep(repo, step, beforeTree, afterTree, format, renames));
       }
     }
     return { testAreasByStep, filesByStep, referenceFilesByStep };

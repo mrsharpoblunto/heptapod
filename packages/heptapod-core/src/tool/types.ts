@@ -23,7 +23,7 @@ export interface TestCase {
   files: string[];
 }
 
-export type TestCaseChangeKind = "added" | "removed" | "changed";
+export type TestCaseChangeKind = "added" | "removed" | "changed" | "moved";
 
 export interface ParsedTestCaseChange {
   name: string;
@@ -180,6 +180,7 @@ export interface TestExecutionMetadata {
 
 export interface PatchFile {
   path: string;
+  from?: string;
   patch: string;
   beforeContent?: string | null;
   afterContent?: string | null;

@@ -68,6 +68,7 @@ export function buildReviewModel(
     const changedPaths = new Set(fileDiffs.map((file) => file.path));
     const knownPaths = new Set([...changedPaths, ...referenceSnapshots.keys()]);
     const describeFile = (file: Callsite): Callsite => {
+      if (fileDiffs.find((candidate) => candidate.path === file.file)?.from) return { ...file, change: "moved" };
       if (file.change) return file;
       const snapshot = filesByStep.get(step.id)?.get(file.file);
       const patch = fileDiffs.find((candidate) => candidate.path === file.file)?.patch ?? "";

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import {
+  ArrowRight,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
@@ -47,7 +48,9 @@ import type {
   ReviewComment,
   ParsedTestCaseChange,
   TestFixtureRun,
+  TestCaseChangeKind,
 } from "@thestraylight/heptapod-core/types";
+import { patchRename } from "@thestraylight/heptapod-core/patch";
 import {
   GitHubIcon,
   useCachedGitHubPullRequestMetadata,
@@ -371,7 +374,16 @@ export function buildDiffSegments(
   return segments;
 }
 
-export function DiffView({
+export function DiffView(props: Parameters<typeof SourceDiffView>[0]): ReactNode {
+  const rename = patchRename(props.patch);
+  if (rename) return <div className="diff-shell moved-file">
+    <div className="moved-file-title">{rename.from} {"->"} {rename.to}</div>
+    <div className="diff moved-file-content">file moved</div>
+  </div>;
+  return <SourceDiffView {...props} />;
+}
+
+function SourceDiffView({
   filePath,
   patch,
   compact = false,
@@ -592,11 +604,12 @@ function StatusBadge({ status }: Pick<Check, "status">): ReactNode {
   return <span className={`status status-${status}`}>{statusLabel(status)}</span>;
 }
 
-function ChangeIcon({ change }: { change: "added" | "removed" | "changed" }): ReactNode {
+function ChangeIcon({ change }: { change: TestCaseChangeKind }): ReactNode {
   return <span className="test-change-icon" role="img" aria-label={change}>
     {change === "added" && <Plus aria-hidden="true" size={13} />}
     {change === "removed" && <Minus aria-hidden="true" size={13} />}
     {change === "changed" && <RefreshCw aria-hidden="true" size={12} />}
+    {change === "moved" && <ArrowRight aria-hidden="true" size={13} />}
   </span>;
 }
 
@@ -719,8 +732,10 @@ function FileLink({
   annotatable = true,
   inline = false,
   change,
+  from,
 }: {
   file: string;
+  from?: string;
   label?: string;
   active: boolean;
   onSelect: (file: string) => void;
@@ -728,22 +743,27 @@ function FileLink({
   connectedCollapsed?: boolean;
   annotatable?: boolean;
   inline?: boolean;
-  change?: "added" | "removed" | "changed";
+  change?: TestCaseChangeKind;
 }): ReactNode {
   const review = useReviewComments();
+  const patch = review?.step.fileDiffs.find((candidate) => candidate.path === file)?.patch;
+  const movedFrom = from ?? (patch ? patchRename(patch)?.from : undefined);
+  if (movedFrom) change = "moved";
+  const title = movedFrom ? `${movedFrom} -> ${file}` : file;
   const target = { kind: "file" as const, stepId: review?.step.id ?? "", anchor: `file:${file}:${label ?? ""}`, path: file };
   const separator = file.lastIndexOf("/");
   const directory = separator === -1 ? "" : file.slice(0, separator + 1);
   const filename = separator === -1 ? file : file.slice(separator + 1);
   const wrap = (content: ReactNode) => annotatable ? <CommentAnchor target={target} inline={inline} centered>{content}</CommentAnchor> : content;
-  if (inline) return wrap(<button className="file-link file-link-inline" onClick={() => onSelect(file)} title={file}>
+  if (inline) return wrap(<button className="file-link file-link-inline" onClick={() => onSelect(file)} title={title}>
     <strong className="file-link-filename">{filename}</strong>
   </button>);
-  return wrap(<button className={classNames("file-link", connected && "file-link-connected", connectedCollapsed && "connected-collapsed", active && "active", change && `test-case-${change}`)} onClick={() => onSelect(file)} title={file}>
+  return wrap(<button className={classNames("file-link", connected && "file-link-connected", connectedCollapsed && "connected-collapsed", active && "active", change && `test-case-${change}`)} onClick={() => onSelect(file)} title={title}>
     {change && <ChangeIcon change={change} />}
     <span className="file-link-copy">
       {label && <span className="file-link-label">{label}</span>}
       <span className="file-link-path">
+        {movedFrom && <span className="file-link-directory">{movedFrom} {"->"} </span>}
         {directory && <span className="file-link-directory">{directory}</span>}
         <strong className="file-link-filename">{filename}</strong>
       </span>
@@ -786,7 +806,15 @@ function DescriptionStep({ step, onSelectFile }: StepViewProps): ReactNode {
 }
 
 function TestsStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNode {
-  const areas = step.testAreas ?? [];
+  const areas = (step.testAreas ?? []).map((area) => ({
+    ...area,
+    files: area.files.map((file) => {
+      const patch = step.fileDiffs.find((candidate) => candidate.path === file.path)?.patch ?? "";
+      // Older stored reviews classified every case in a renamed fixture as added.
+      if (!patchRename(patch) || /^@@/m.test(patch)) return file;
+      return { ...file, cases: file.cases.map((testCase) => ({ ...testCase, change: "moved" as const })) };
+    }),
+  }));
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(() => new Set());
   return <>
     {step.body && <Markdown source={step.body} files={allStepFiles(step)} onSelectFile={onSelectFile} />}
@@ -863,9 +891,10 @@ function TestsStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNo
 }
 
 function ChangedFileList({ files, step, selectedFile, onSelectFile }: StepViewProps & { files: Callsite[] }): ReactNode {
-  const callsiteChange = (file: string, declared?: "added" | "removed" | "changed") => {
-    if (declared) return declared;
+  const callsiteChange = (file: string, declared?: TestCaseChangeKind) => {
     const snapshot = step.fileDiffs.find((candidate) => candidate.path === file);
+    if (snapshot && patchRename(snapshot.patch)) return "moved";
+    if (declared) return declared;
     if (snapshot?.beforeContent === null) return "added";
     if (snapshot?.afterContent === null) return "removed";
     return "changed";
@@ -1026,7 +1055,7 @@ function ReviewSummaryRail({ onSelectFile }: { onSelectFile: (path: string, step
       })}</ul>
     </section>
     <section><h3 className="eyebrow">{changedFiles.length} {changedFiles.length === 1 ? "file" : "files"} changed</h3>
-      <ul className="file-pills">{changedFiles.map((file) => <li key={file.path}><FileLink file={file.path} active={false} onSelect={(path) => onSelectFile(path, file.stepId)} /></li>)}</ul>
+      <ul className="file-pills">{changedFiles.map((file) => <li key={file.path}><FileLink file={file.path} from={file.status.startsWith("R") ? file.from : undefined} active={false} onSelect={(path) => onSelectFile(path, file.stepId)} /></li>)}</ul>
     </section>
   </div>;
 }
