@@ -8,11 +8,9 @@ import {
   ChevronUp,
   ChevronDown,
   ExternalLink,
-  FoldVertical,
   Maximize2,
   Menu,
   MessageSquare,
-  Minimize2,
   Minus,
   PanelRightClose,
   PanelRightOpen,
@@ -23,6 +21,7 @@ import {
 } from "lucide-react";
 import {
   createContext,
+  useCallback,
   memo,
   Fragment,
   useEffect,
@@ -40,7 +39,8 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import hljs from "highlight.js/lib/common";
+import { DiffExplanationBubble } from "./DiffExplanationBubble";
+import { highlightedHtml, highlightSourceLines, SyntaxCode } from "./DiffSyntax";
 import type {
   Callsite,
   Check,
@@ -52,6 +52,9 @@ import type {
   ParsedTestCaseChange,
   TestFixtureRun,
   TestCaseChangeKind,
+  SemanticDiff,
+  DiffExplanation,
+  SemanticRange,
 } from "@thestraylight/heptapod-core/types";
 import { patchRename } from "@thestraylight/heptapod-core/patch";
 import {
@@ -81,7 +84,7 @@ function kindLabel(kind: RenderStep["kind"]): string {
   return { description: "Context", tests: "Tests", refactor: "Refactor", implementation: "Implementation", manual: "Tests" }[kind];
 }
 
-const ReviewRuntimeContext = createContext<{ reviewId?: string }>({});
+const ReviewRuntimeContext = createContext<{ reviewId?: string; editorLinks?: RenderModel["editorLinks"]; source?: RenderModel["source"] }>({});
 
 function languageForFile(path?: string): string | undefined {
   const extension = path?.split(".").at(-1)?.toLowerCase();
@@ -94,24 +97,6 @@ function languageForFile(path?: string): string | undefined {
     xml: "xml", yaml: "yaml", yml: "yaml", zsh: "bash",
   }[extension ?? ""];
 }
-
-function highlightedHtml(source: string, language?: string): string {
-  if (!source) return "";
-  try {
-    return language && hljs.getLanguage(language)
-      ? hljs.highlight(source, { language }).value
-      : hljs.highlightAuto(source).value;
-  } catch {
-    return source
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
-  }
-}
-
-const HighlightedDiffCode = memo(function HighlightedDiffCode({ content, language }: { content: string; language: string | undefined }) {
-  return <span className="hljs" dangerouslySetInnerHTML={{ __html: highlightedHtml(content, language) }} />;
-});
 
 function HighlightedCode({ source, language }: { source: string; language?: string }): ReactNode {
   return <code className="hljs" dangerouslySetInnerHTML={{ __html: highlightedHtml(source, language) }} />;
@@ -255,6 +240,13 @@ interface DiffLine {
   key: number;
   oldStart?: number;
   newStart?: number;
+  changes?: SemanticRange[];
+  semantic?: {
+    before: string | null;
+    after: string | null;
+    beforeChanges: SemanticRange[];
+    afterChanges: SemanticRange[];
+  };
 }
 
 interface DiffTarget {
@@ -382,10 +374,76 @@ export function buildDiffSegments(
   return segments;
 }
 
+export function semanticDiffLines(diff: Extract<SemanticDiff, { status: "ready" }>, before: string, after: string): DiffLine[] {
+  const lhs = sourceLines(before), rhs = sourceLines(after);
+  const lines: DiffLine[] = [];
+  for (const [old, next] of diff.alignment) {
+    const beforeChanges = old === null ? [] : diff.before[old] ?? [];
+    const afterChanges = next === null ? [] : diff.after[next] ?? [];
+    // Preserve Difftastic's aligned row. Turning it into two unified-diff rows
+    // duplicates unchanged syntax and loses the native replacement layout.
+    lines.push({ key: lines.length, type: "context", content: ` ${next === null ? lhs[old! - 1] : rhs[next - 1]}`,
+      old, next, changes: [...beforeChanges, ...afterChanges],
+      semantic: { before: old === null ? null : lhs[old - 1], after: next === null ? null : rhs[next - 1], beforeChanges, afterChanges } });
+  }
+  return lines;
+}
+
+function explanationContains(note: DiffExplanation, line: DiffLine): boolean {
+  const number = note.side === "LEFT" ? line.old : line.next;
+  return number !== null && number >= note.startLine && number <= (note.endLine ?? note.startLine);
+}
+
+export function semanticDiffSegments(lines: DiffLine[], explanations: DiffExplanation[] = []): DiffSegment[] {
+  const visible = new Set<number>();
+  lines.forEach((line, index) => {
+    if (!line.changes?.length && !explanations.some((note) => explanationContains(note, line))) return;
+    for (let offset = Math.max(0, index - 3); offset <= Math.min(lines.length - 1, index + 3); offset++) visible.add(offset);
+  });
+  const segments: DiffSegment[] = [];
+  for (let start = 0; start < lines.length;) {
+    const expanded = visible.has(start);
+    let end = start + 1;
+    while (end < lines.length && visible.has(end) === expanded) end++;
+    const group = lines.slice(start, end);
+    const id = `semantic-${start}`;
+    if (expanded) segments.push({ kind: "lines", id, lines: group });
+    else {
+      const old = group.flatMap((line) => line.old === null ? [] : [line.old]);
+      const next = group.flatMap((line) => line.next === null ? [] : [line.next]);
+      segments.push({ kind: "gap", gap: { id, lines: group, oldStart: old[0] ?? 0, oldEnd: old.at(-1) ?? 0, newStart: next[0] ?? 0, newEnd: next.at(-1) ?? 0 } });
+    }
+    start = end;
+  }
+  return segments;
+}
+
+/** Difftastic's default chooses columns per hunk, based on novel syntax. */
+export function semanticDiffLayout(lines: DiffLine[]): "before" | "after" | "both" {
+  const before = lines.some((line) => line.semantic?.beforeChanges.length);
+  const after = lines.some((line) => line.semantic?.afterChanges.length);
+  if (before && after) return "both";
+  if (before) return "before";
+  // Expanded context can contain reflowed syntax. Keep both snapshots visible.
+  if (!after && lines.some((line) => line.semantic && line.semantic.before !== line.semantic.after)) return "both";
+  return "after";
+}
+
+export function semanticWholeLine(content: string | null, changes: SemanticRange[], opposite: string | null): boolean {
+  if (content === null) return false;
+  if (!content.trim()) return opposite === null;
+  // Indentation and spaces between novel tokens do not break a whole-line edit.
+  return Array.from(content.matchAll(/\S/gu)).every((match) =>
+    changes.some((range) => range.start <= match.index && range.end >= match.index + match[0].length));
+}
+
 export function DiffView(props: Parameters<typeof SourceDiffView>[0]): ReactNode {
   const rename = patchRename(props.patch);
-  if (rename) return <div className="diff-shell moved-file">
-    <div className="diff moved-file-content">file moved</div>
+  const binary = /^(?:GIT binary patch|Binary files )/m.test(props.patch)
+    || props.beforeContent?.includes("\0") || props.afterContent?.includes("\0");
+  const placeholder = binary ? "binary file" : rename && !/^@@/m.test(props.patch) ? "file moved" : null;
+  if (placeholder) return <div className="diff-shell moved-file">
+    <div className="diff moved-file-content">{placeholder}</div>
   </div>;
   return <MemoizedSourceDiffView {...props} />;
 }
@@ -399,9 +457,10 @@ function SourceDiffView({
   scrollTarget,
   beforeContent,
   afterContent,
-  githubFileUrl,
   commentStepId,
   snippetRange,
+  semanticDiff,
+  explanations,
 }: {
   filePath: string;
   patch: string;
@@ -409,9 +468,10 @@ function SourceDiffView({
   scrollTarget?: DiffTarget | null;
   beforeContent?: string | null;
   afterContent?: string | null;
-  githubFileUrl?: string | null;
   commentStepId?: string;
   snippetRange?: { side: "LEFT" | "RIGHT"; startLine: number; endLine: number };
+  semanticDiff?: SemanticDiff;
+  explanations?: DiffExplanation[];
 }): ReactNode {
   const containerRef = useRef<HTMLDivElement>(null);
   const comments = useReviewActions();
@@ -423,23 +483,43 @@ function SourceDiffView({
   const dragRange = useRef<typeof commentRange>(null);
   const [expandedGaps, setExpandedGaps] = useState<Set<string>>(() => new Set());
   const [fullFile, setFullFile] = useState(false);
+  const [standardDiff, setStandardDiff] = useState(false);
+  const structural = !standardDiff && semanticDiff?.status === "ready" ? semanticDiff : undefined;
+  const notes = useMemo(() => explanations?.filter((note) => note.file === filePath) ?? [], [explanations, filePath]);
+  const [activeExplanations, setActiveExplanations] = useState<DiffExplanation[]>([]);
+  const explanationActive = useCallback((notes: DiffExplanation[], active: boolean) => {
+    setActiveExplanations((current) => active ? notes : current === notes ? [] : current);
+  }, []);
   const language = languageForFile(filePath);
+  const beforeSyntax = useMemo(() => beforeContent == null ? undefined : highlightSourceLines(beforeContent, language), [beforeContent, language]);
+  const afterSyntax = useMemo(() => afterContent == null ? undefined : highlightSourceLines(afterContent, language), [afterContent, language]);
   const pureAddition = /^(?:new file mode |--- \/dev\/null$)/m.test(patch);
   const pureDeletion = /^(?:deleted file mode |\+\+\+ \/dev\/null$)/m.test(patch);
   const lines = useMemo(() => {
+    if (structural && !structural.unchanged) return semanticDiffLines(structural, beforeContent ?? "", afterContent ?? "");
     const parsed = parseDiff(patch);
     const firstHunk = parsed.findIndex((line) => line.type === "hunk");
-    return firstHunk === -1 ? parsed : parsed.slice(firstHunk);
-  }, [patch]);
-  const unchanged = !lines.some((line) => line.type === "add" || line.type === "del");
+    const lines = firstHunk === -1 ? parsed : parsed.slice(firstHunk);
+    return structural ? lines.map((line) => ({ ...line, changes: [] })) : lines;
+  }, [patch, structural, beforeContent, afterContent]);
+  const unchanged = !structural && !lines.some((line) => line.type === "add" || line.type === "del");
   const segments = useMemo(
-    () => buildDiffSegments(lines, beforeContent, afterContent),
-    [afterContent, beforeContent, lines],
+    () => structural && !structural.unchanged ? semanticDiffSegments(lines, notes) : buildDiffSegments(lines, beforeContent, afterContent),
+    [afterContent, beforeContent, lines, structural, notes],
   );
   const visibleLines = useMemo(() => segments.flatMap((segment) => {
     if (segment.kind === "lines") return segment.lines;
     return fullFile || expandedGaps.has(segment.gap.id) ? segment.gap.lines : [];
   }), [expandedGaps, fullFile, segments]);
+
+  const explanationAnchors = useMemo(() => {
+    const anchors = new Map<number, DiffExplanation[]>();
+    for (const note of notes) {
+      const line = lines.find((line) => (note.side === "LEFT" ? line.old : line.next) === note.startLine);
+      if (line) anchors.set(line.key, [...(anchors.get(line.key) ?? []), note]);
+    }
+    return anchors;
+  }, [lines, notes]);
 
   useEffect(() => {
     const finish = () => {
@@ -458,6 +538,11 @@ function SourceDiffView({
   }, [comments, filePath, annotationStep]);
 
   useEffect(() => {
+    setExpandedGaps(new Set());
+    setFullFile(false);
+  }, [patch, structural]);
+
+  useEffect(() => {
     setExpandedGaps((current) => {
       const next = new Set(current);
       for (const segment of segments) {
@@ -468,11 +553,6 @@ function SourceDiffView({
       return next.size === current.size ? current : next;
     });
   }, [codeComments, segments]);
-
-  useEffect(() => {
-    setExpandedGaps(new Set());
-    setFullFile(false);
-  }, [patch]);
 
   useEffect(() => {
     if (!scrollTarget) return;
@@ -519,7 +599,7 @@ function SourceDiffView({
     target?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [scrollTarget, targetMatch]);
 
-  const renderLine = (line: DiffLine): ReactNode => {
+  const renderLine = (line: DiffLine, layout?: "before" | "after" | "both", singleGutter = false): ReactNode => {
     if (line.type === "hunk") return null;
     const isCodeLine = line.type === "add" || line.type === "del" || line.type === "context";
     const omitMarker = (pureAddition && line.type === "add") || (pureDeletion && line.type === "del");
@@ -540,31 +620,60 @@ function SourceDiffView({
     const annotated = [...codeComments, ...(snippetRange ? [{ target: { kind: "line", ...snippetRange } }] : [])].some(({ target }) => target.kind === "line" && (target.side === "LEFT" ? line.old : line.next) !== null
       && (target.side === "LEFT" ? line.old! : line.next!) >= target.startLine && (target.side === "LEFT" ? line.old! : line.next!) <= target.endLine);
     const inSelection = selectedRange !== null && selectedRange !== undefined && commentRange && selectedRange >= Math.min(commentRange.start, commentRange.end) && selectedRange <= Math.max(commentRange.start, commentRange.end);
-    return <Fragment key={line.key}><div className={classNames(`diff-line diff-${line.type}`, targetMatch.keys.has(line.key) && "diff-target", Boolean(inSelection || annotated) && "diff-comment-range")} data-diff-key={line.key}>
+    const annotations = codeComments.filter(({ target }) => target.kind === "line" && target.endLine === (target.side === "LEFT" ? line.old : line.next))
+      .map((comment) => <CodeCommentBlock commentId={comment.id} key={comment.id} />);
+    const lineExplanations = explanationAnchors.get(line.key);
+    const explanation = lineExplanations && <DiffExplanationBubble explanations={lineExplanations} onActiveChange={explanationActive} />;
+    const explained = activeExplanations.some((note) => explanationContains(note, line));
+    if (line.semantic && layout) {
+      const { before, after, beforeChanges, afterChanges } = line.semantic;
+      const code = (side: "before" | "after") => {
+        const changes = side === "before" ? beforeChanges : afterChanges;
+        return <code className={classNames("diff-semantic-code", side === "before" ? "diff-del" : "diff-add",
+          semanticWholeLine(side === "before" ? before : after, changes, side === "before" ? after : before) && "diff-whole-line")} data-side={side === "before" ? "LEFT" : "RIGHT"}>
+          <SyntaxCode content={(side === "before" ? before : after) ?? ""} changes={changes} language={language}
+            syntax={side === "before" ? beforeSyntax?.[(line.old ?? 0) - 1] : afterSyntax?.[(line.next ?? 0) - 1]} />
+        </code>;
+      };
+      return <Fragment key={line.key}><div className={classNames("diff-line diff-semantic-row", layout === "both" ? "diff-split-row" : "diff-single-row",
+        singleGutter && "diff-single-gutter", explained && "diff-explained-range", targetMatch.keys.has(line.key) && "diff-target", Boolean(inSelection || annotated) && "diff-comment-range")}
+        data-diff-key={line.key} data-old-line={line.old ?? undefined} data-new-line={line.next ?? undefined}>
+        {layout === "both"
+          ? <>{lineNumber(line.old, "LEFT")}{code("before")}{lineNumber(line.next, "RIGHT")}{code("after")}</>
+          : <>{singleGutter
+            ? layout === "before" ? lineNumber(line.old, "LEFT") : lineNumber(line.next, "RIGHT")
+            : <>{lineNumber(line.old, "LEFT")}{lineNumber(line.next, "RIGHT")}</>}{code(layout)}</>}
+      {explanation}</div>{annotations}</Fragment>;
+    }
+    return <Fragment key={line.key}><div className={classNames(`diff-line diff-${line.type}`, line.changes !== undefined && "diff-semantic-line", explained && "diff-explained-range", targetMatch.keys.has(line.key) && "diff-target", Boolean(inSelection || annotated) && "diff-comment-range")} data-diff-key={line.key} data-old-line={line.old ?? undefined} data-new-line={line.next ?? undefined}>
       {pureAddition || unchanged
         ? lineNumber(line.next, "RIGHT")
         : pureDeletion
           ? lineNumber(line.old, "LEFT")
           : <>{lineNumber(line.old, "LEFT")}{lineNumber(line.next, "RIGHT")}</>}
-      <code>{marker && <span className="diff-marker">{marker}</span>}<HighlightedDiffCode content={content} language={language} /></code>
-    </div>{codeComments.filter(({ target }) => target.kind === "line" && target.endLine === (target.side === "LEFT" ? line.old : line.next)).map((comment) => <CodeCommentBlock commentId={comment.id} key={comment.id} />)}</Fragment>;
+      <code>{marker && <span className="diff-marker">{marker}</span>}<SyntaxCode content={content} changes={line.changes} language={language}
+        syntax={line.type === "del" ? beforeSyntax?.[(line.old ?? 0) - 1] : afterSyntax?.[(line.next ?? 0) - 1]} /></code>
+    {explanation}</div>{annotations}</Fragment>;
+  };
+  const renderLines = (group: DiffLine[], id?: string) => {
+    const preferredLayout = group.some((line) => line.semantic) ? semanticDiffLayout(group) : undefined;
+    const revealOtherSide = notes.some((note) => (preferredLayout === "after" ? note.side === "LEFT" : preferredLayout === "before" && note.side === "RIGHT")
+      && group.some((line) => explanationContains(note, line)));
+    const layout = revealOtherSide ? "both" : preferredLayout;
+    const singleGutter = layout !== undefined && layout !== "both"
+      && group.every((line) => layout === "before" ? line.next === null : line.old === null);
+    return <div className="diff-lines" data-columns={layout === "both" ? 2 : 1} key={id}>
+      {group.map((line) => renderLine(line, layout, singleGutter))}
+    </div>;
   };
   const gaps = segments.filter((segment): segment is Extract<DiffSegment, { kind: "gap" }> => segment.kind === "gap");
+  const hiddenGaps = gaps.filter((segment) => !fullFile && !expandedGaps.has(segment.gap.id));
   const globalActions = <div className="diff-global-actions">
-    {gaps.length > 0 && <button onClick={() => {
-      if (fullFile) {
-        setFullFile(false);
-        setExpandedGaps(new Set());
-      } else {
-        setFullFile(true);
-      }
-    }} title={fullFile ? "Collapse all context" : "Expand full file"}>
-      {fullFile ? <Minimize2 aria-hidden="true" size={13} /> : <Maximize2 aria-hidden="true" size={13} />}
-      <span>{fullFile ? "Collapse all" : "Expand all"}</span>
+    {hiddenGaps.length > 0 && <button onClick={() => setFullFile(true)} title="Expand full file">
+      <Maximize2 aria-hidden="true" size={13} />
+      <span>Expand all</span>
     </button>}
-    {githubFileUrl && <a className="github-file-action" aria-label="Open file in GitHub" href={githubFileUrl} target="_blank" rel="noreferrer" title="Open file in GitHub">
-      <GitHubIcon />
-    </a>}
+
   </div>;
 
   if (snippetRange) {
@@ -573,39 +682,30 @@ function SourceDiffView({
     const start = allLines.findIndex((line) => line[side] === snippetRange.startLine);
     const end = allLines.findIndex((line) => line[side] === snippetRange.endLine);
     const snippet = start < 0 ? [] : allLines.slice(Math.max(0, start - 2), Math.min(allLines.length, Math.max(start, end) + 3));
-    return <div className="diff-shell"><div className={classNames("diff", "diff-compact", (pureAddition || pureDeletion || unchanged) && "diff-pure")}>
-      <div className="diff-lines">{snippet.map(renderLine)}</div></div></div>;
+    return <div className="diff-shell"><div className={classNames("diff", "diff-compact", notes.length > 0 && "diff-with-explanations", (pureAddition || pureDeletion || unchanged) && "diff-pure")}>
+      {renderLines(snippet)}</div></div>;
   }
   return <div className="diff-shell">
-    <div className={classNames("diff", compact && "diff-compact", (pureAddition || pureDeletion || unchanged) && "diff-pure")} ref={containerRef}>
-      {gaps.length === 0 && githubFileUrl && <div className="diff-gap diff-control-gap">{globalActions}</div>}
-      {segments.map((segment) => segment.kind === "lines"
-        ? <div className="diff-lines" key={segment.id}>{segment.lines.map(renderLine)}</div>
-        : <div className="diff-segment" key={segment.gap.id}>
-          <div className="diff-gap">
-            <button
-              className="diff-gap-toggle"
-              onClick={() => {
-                const expanded = fullFile || expandedGaps.has(segment.gap.id);
-                if (fullFile) setFullFile(false);
-                setExpandedGaps((current) => {
-                  const next = new Set(current);
-                  if (expanded) next.delete(segment.gap.id);
-                  else next.add(segment.gap.id);
-                  return next;
-                });
-              }}
-              title={fullFile || expandedGaps.has(segment.gap.id) ? "Collapse hidden lines" : "Expand hidden lines"}
-            >
-              {fullFile || expandedGaps.has(segment.gap.id)
-                ? <FoldVertical aria-hidden="true" size={13} />
-                : <UnfoldVertical aria-hidden="true" size={13} />}
-              <span>{fullFile || expandedGaps.has(segment.gap.id) ? "Collapse" : "Expand"} {segment.gap.lines.length} hidden {segment.gap.lines.length === 1 ? "line" : "lines"}</span>
+    {semanticDiff && <div className="diff-engine-bar">
+      <span title={semanticDiff.status === "fallback" ? semanticDiff.reason : undefined}>{structural
+        ? structural.unchanged ? "Difftastic · No syntactic changes" : `Difftastic · ${structural.language}`
+        : semanticDiff.status === "fallback" ? "Standard diff · Structural diff unavailable" : "Standard diff"}</span>
+      {semanticDiff.status === "ready" && <button onClick={() => setStandardDiff((value) => !value)}>{standardDiff ? "Show structural diff" : "Show standard diff"}</button>}
+    </div>}
+    <div className={classNames("diff", compact && "diff-compact", notes.length > 0 && "diff-with-explanations", (pureAddition || pureDeletion || unchanged) && "diff-pure")} ref={containerRef}>
+      {structural?.unchanged && notes.length === 0 && <div className="diff-no-changes">No syntactic changes.</div>}
+      {(!structural?.unchanged || notes.length > 0) && segments.map((segment) => segment.kind === "lines"
+        ? renderLines(segment.lines, segment.id)
+        : fullFile || expandedGaps.has(segment.gap.id)
+          ? renderLines(segment.gap.lines, segment.gap.id)
+          : <div className="diff-gap" key={segment.gap.id}>
+            <button className="diff-gap-toggle" title="Expand hidden lines"
+              onClick={() => setExpandedGaps((current) => new Set([...current, segment.gap.id]))}>
+              <UnfoldVertical aria-hidden="true" size={13} />
+              <span>Expand {segment.gap.lines.length} hidden {segment.gap.lines.length === 1 ? "line" : "lines"}</span>
             </button>
-            {segment.gap.id === gaps[0]?.gap.id && globalActions}
-          </div>
-          {(fullFile || expandedGaps.has(segment.gap.id)) && <div className="diff-lines">{segment.gap.lines.map(renderLine)}</div>}
-        </div>)}
+            {segment.gap.id === hiddenGaps[0]?.gap.id && globalActions}
+          </div>)}
     </div>
   </div>;
 }
@@ -756,7 +856,13 @@ function FileLink({
   change?: TestCaseChangeKind;
 }): ReactNode {
   const review = useReviewActions();
-  const patch = review?.step.fileDiffs.find((candidate) => candidate.path === file)?.patch;
+  const fileDiff = review?.step.fileDiffs.find((candidate) => candidate.path === file);
+  const patch = fileDiff?.patch;
+  const { editorLinks, source } = useContext(ReviewRuntimeContext);
+  const editorLink = editorLinks?.[file];
+  const githubLink = source ? githubFileUrl(source, fileDiff ?? {
+    path: file, afterContent: source.files?.some((entry) => entry.path === file && entry.status === "D") ? null : undefined,
+  }) : null;
   const movedFrom = from ?? (patch ? patchRename(patch)?.from : undefined);
   if (movedFrom) change = "moved";
   const title = movedFrom ? `${movedFrom} -> ${file}` : file;
@@ -764,7 +870,23 @@ function FileLink({
   const separator = file.lastIndexOf("/");
   const directory = separator === -1 ? "" : file.slice(0, separator + 1);
   const filename = separator === -1 ? file : file.slice(separator + 1);
-  const wrap = (content: ReactNode) => annotatable ? <CommentAnchor target={target} inline={inline} centered>{content}</CommentAnchor> : content;
+  const wrap = (content: ReactNode) => {
+    const link = editorLink || githubLink ? <span className={classNames("file-link-with-editor", editorLink && githubLink && "file-link-with-both-actions", inline && "file-link-with-editor-inline")}>
+      {content}
+      <span className="file-link-actions">
+      {editorLink && <a className="vscode-link" href={editorLink.url}
+        aria-label={`Open ${file} in VS Code (review ${editorLink.side} ${editorLink.revision.slice(0, 8)})`}
+        title={`Open in VS Code · review ${editorLink.side} ${editorLink.revision.slice(0, 8)}`}>
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <path d="m17 1 6 3v16l-6 3L7 14.5l-4 3L0 16V8l3-1.5 4 3L17 1Zm0 6-7 5 7 5V7ZM3 9v6l3-3-3-3Z" />
+        </svg>
+      </a>}
+      {githubLink && <a className="github-file-action" href={githubLink} target="_blank" rel="noreferrer"
+        aria-label={`Open ${file} in GitHub`} title="Open file in GitHub"><GitHubIcon /></a>}
+      </span>
+    </span> : content;
+    return annotatable ? <CommentAnchor target={target} inline={inline} centered>{link}</CommentAnchor> : link;
+  };
   if (inline) return wrap(<button className="file-link file-link-inline" onClick={() => onSelect(file)} title={title}>
     <strong className="file-link-filename">{filename}</strong>
   </button>);
@@ -800,7 +922,7 @@ export function resolveStepFile(steps: RenderStep[], stepIndex: number, path: st
     if (!file) continue;
     if (index === stepIndex) return file;
     if (file.afterContent === null || file.afterContent === undefined) return undefined;
-    return { ...file, patch: "", beforeContent: file.afterContent };
+    return { ...file, patch: "", beforeContent: file.afterContent, semanticDiff: undefined, explanations: undefined };
   }
   return undefined;
 }
@@ -970,7 +1092,7 @@ function RefactorStep({ step, selectedFile, onSelectFile }: StepViewProps): Reac
   </>;
 }
 
-function githubFileUrl(source: RenderModel["source"], file: PatchFile): string | null {
+function githubFileUrl(source: RenderModel["source"], file: Pick<PatchFile, "path" | "afterContent">): string | null {
   if (!source.github) return null;
   const revision = file.afterContent === null ? source.base : source.head;
   const path = file.path.split("/").map(encodeURIComponent).join("/");
@@ -981,8 +1103,7 @@ function ImplementationStep({
   step,
   selectedFile,
   onSelectFile,
-  source,
-}: StepViewProps & { source: RenderModel["source"] }): ReactNode {
+}: StepViewProps): ReactNode {
   const { collapsedFiles, toggleFile } = useCollapsibleFiles();
   const filesByPath = new Map(step.fileDiffs.map((file) => [file.path, file]));
   return <>
@@ -1018,7 +1139,7 @@ function ImplementationStep({
                 patch={file.patch}
                 beforeContent={file.beforeContent}
                 afterContent={file.afterContent}
-                githubFileUrl={githubFileUrl(source, file)}
+                semanticDiff={file.semanticDiff} explanations={file.explanations}
               />}
             </div>;
           })}
@@ -1037,11 +1158,10 @@ function StepContent({
   step,
   selectedFile,
   onSelectFile,
-  source,
-}: StepViewProps & { source: RenderModel["source"] }): ReactNode {
+}: StepViewProps): ReactNode {
   if (step.kind === "tests" || step.kind === "manual") return <TestsStep step={step} selectedFile={selectedFile} onSelectFile={onSelectFile} />;
   if (step.kind === "refactor") return <RefactorStep step={step} selectedFile={selectedFile} onSelectFile={onSelectFile} />;
-  if (step.kind === "implementation") return <ImplementationStep step={step} selectedFile={selectedFile} onSelectFile={onSelectFile} source={source} />;
+  if (step.kind === "implementation") return <ImplementationStep step={step} selectedFile={selectedFile} onSelectFile={onSelectFile} />;
   return <DescriptionStep step={step} selectedFile={selectedFile} onSelectFile={onSelectFile} />;
 }
 
@@ -1087,7 +1207,6 @@ function ReviewSummaryRail({ onSelectFile }: { onSelectFile: (path: string, step
 
 function DetailPanel({
   step,
-  source,
   selected,
   selectedFile,
   onSelectFile,
@@ -1108,7 +1227,6 @@ function DetailPanel({
   mobile = false,
   panelRef,
 }: StepViewProps & {
-  source: RenderModel["source"];
   tabs: string[];
   onReorderTab: (from: string, to: string) => void;
   fixtureRuns: TestFixtureRun[];
@@ -1170,7 +1288,6 @@ function DetailPanel({
     : <PanelRightClose aria-hidden="true" size={16} />}
   </button>;
   if (collapsed) return mobile ? null : toggle;
-  const selectedGitHubUrl = selected ? githubFileUrl(source, selected) : null;
   return <aside id="review-detail-panel" ref={panelRef} className="detail-panel" role={mobile ? "dialog" : undefined} aria-modal={mobile || undefined} aria-label="Review details">
     {mobile && <div className="mobile-panel-header"><strong>Review details</strong><button aria-label="Close review details" onClick={onToggle}><X size={22} aria-hidden="true" /></button></div>}
     <div
@@ -1252,7 +1369,7 @@ function DetailPanel({
           scrollTarget={scrollTarget}
           beforeContent={selected.beforeContent}
           afterContent={selected.afterContent}
-          githubFileUrl={selectedGitHubUrl}
+          semanticDiff={selected.semanticDiff} explanations={selected.explanations}
         />
       </div>
     </div>}
@@ -1270,7 +1387,7 @@ function ReviewThread({ comment, model, onSelectFile }: { comment: ReviewComment
   const location = target.kind === "line" ? target.side === "LEFT" ? { oldLine: target.startLine, oldEndLine: target.endLine } : { newLine: target.startLine, newEndLine: target.endLine } : undefined;
   return <><header><FileLink file={target.path} active={false} annotatable={false}
     onSelect={(path) => onSelectFile(path, stepIndex, location)} /></header>
-    {target.kind === "line" && file && <DiffView filePath={target.path} patch={file.patch} beforeContent={file.beforeContent} afterContent={file.afterContent} snippetRange={target} />}
+    {target.kind === "line" && file && <DiffView filePath={target.path} patch={file.patch} beforeContent={file.beforeContent} afterContent={file.afterContent} semanticDiff={file.semanticDiff} explanations={file.explanations} snippetRange={target} />}
     <CodeCommentBlock commentId={comment.id} autofocus={false} />
   </>;
 }
@@ -1475,7 +1592,7 @@ export function ReviewViewer({
     document.title = `${finalReview ? "Review" : `${step.number}. ${step.title}`} — ${data.title}`;
   }, [data.steps, data.title, step, finalReview, githubReview, githubMetadataLoading]);
 
-  return <ReviewCommentsProvider disabled={mobile} key={`${reviewId ?? data.source.base}:${data.source.head}`} model={data} reviewId={reviewId ?? String(data.source.github?.number ?? "")} step={step} updating={currentStatus.status !== "ready"} renderMarkdown={(source) => <Markdown source={source} annotatable={false} />}><ReviewRuntimeContext.Provider value={{ reviewId }}><div className={`app-shell${isUpdating ? " app-shell-updating" : ""}${mobile && mobilePanel ? ` mobile-${mobilePanel}-open` : ""}`}>
+  return <ReviewCommentsProvider disabled={mobile} key={`${reviewId ?? data.source.base}:${data.source.head}`} model={data} reviewId={reviewId ?? String(data.source.github?.number ?? "")} step={step} updating={currentStatus.status !== "ready"} renderMarkdown={(source) => <Markdown source={source} annotatable={false} />}><ReviewRuntimeContext.Provider value={{ reviewId, editorLinks: data.editorLinks, source: data.source }}><div className={`app-shell${isUpdating ? " app-shell-updating" : ""}${mobile && mobilePanel ? ` mobile-${mobilePanel}-open` : ""}`}>
     <header className="topbar" inert={mobile && mobilePanel !== null}>
       <ReviewHeader review={{
         id: reviewId ?? `${data.source.base}/${data.source.head}`,
@@ -1524,7 +1641,7 @@ export function ReviewViewer({
           {finalReview ? <FinalReview renderThread={(comment) => <ReviewThread comment={comment} model={data} onSelectFile={(path, index, target) => {
             setReviewFileSteps((current) => ({ ...current, [path]: index })); openFile(path, target);
           }} />} /> : <><StepHeading step={step} />
-          <StepContent key={step.id} step={step} selectedFile={selectedFile} onSelectFile={openFile} source={data.source} /></>}
+          <StepContent key={step.id} step={step} selectedFile={selectedFile} onSelectFile={openFile} /></>}
         </div>
         <div className="step-pager">
           <div className="step-control" aria-label="Step navigation">
@@ -1545,7 +1662,6 @@ export function ReviewViewer({
           openFile(path, target);
         }}
         step={data.steps[detailStepIndex]}
-        source={data.source}
         selected={selected}
         selectedFile={selectedFile}
         onSelectFile={openFile}

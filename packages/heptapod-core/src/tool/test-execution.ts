@@ -6,9 +6,9 @@ import { mkdtempSync } from "node:fs";
 import { loadHeptapodConfig, type HeptapodConfig } from "./config.js";
 import { type FixtureFormat } from "./test-fixtures/index.js";
 import { runnerAdapters } from "./test-runners/index.js";
-import { testCommand, type TestCommand, type TestRunnerAdapter } from "./test-runners/types.js";
+import { testCommand, type FixtureTestResult, type TestBatchCommand, type TestCommand, type TestRunnerAdapter } from "./test-runners/types.js";
 import { readArtifact } from "./manifest.js";
-import { splitPatchFiles } from "./patch.js";
+import { patchRename, splitPatchFiles } from "./patch.js";
 import { run } from "./process.js";
 import type {
   ExpectedTestStatus,
@@ -27,6 +27,8 @@ interface TestPlan {
   adapter: TestRunnerAdapter;
   fixtureFormat: FixtureFormat;
   runnerTemplate?: string[];
+  batch: boolean;
+  rebuild: "auto" | "always" | "never";
 }
 
 export interface NarrativeTestExecution {
@@ -50,6 +52,8 @@ function detectTestPlan(worktree: string, config: HeptapodConfig | null): TestPl
     adapter,
     fixtureFormat: config?.test?.fixtures?.format ?? "auto",
     runnerTemplate: config?.test?.runner?.command ?? (inferred?.targeted === false ? undefined : template),
+    batch: config?.test?.runner?.batch ?? Boolean(adapter.batch && adapter.parseBatchResult),
+    rebuild: config?.test?.runner?.rebuild ?? "auto",
   };
 }
 
@@ -138,6 +142,8 @@ interface CommandResult {
   durationMs: number;
   output: string;
   detail?: string;
+  fixtures?: Record<string, FixtureTestResult>;
+  batchError?: string;
 }
 
 function executeCommand(command: TestCommand, worktree: string, timeoutMs: number, repo: string): CommandResult {
@@ -161,14 +167,23 @@ function executeCommand(command: TestCommand, worktree: string, timeoutMs: numbe
   };
 }
 
-function executeTestCommand(command: TestCommand, worktree: string, timeoutMs: number, repo: string, adapter: TestRunnerAdapter): CommandResult {
+function executeTestCommand(command: TestCommand, worktree: string, timeoutMs: number, repo: string, adapter: TestRunnerAdapter, batch?: { files: string[]; format: FixtureFormat }): CommandResult {
   const result = executeCommand(command, worktree, timeoutMs, repo);
   const parsed = adapter.parseResult(result.output);
+  let fixtures: CommandResult["fixtures"], batchError: string | undefined;
+  if (batch) {
+    try { fixtures = adapter.parseBatchResult!(result.output, command, batch.files, worktree, batch.format); }
+    catch (error) { batchError = `Could not read individual batch results: ${error instanceof Error ? error.message : String(error)}`; }
+  }
+  const missing = batch?.files.filter(file => !fixtures?.[file]) ?? [];
+  const fixtureFailures = Object.values(fixtures ?? {}).flatMap(result => result.failures);
+  const fixtureFailed = Object.values(fixtures ?? {}).some(result => result.status === "failing");
   return {
     ...result,
-    observedFailures: parsed.failures,
-    status: result.status === "passing" && (parsed.error || parsed.failures.length) ? "failing" : result.status,
-    detail: result.detail ?? parsed.error,
+    fixtures, batchError,
+    observedFailures: [...new Set([...parsed.failures, ...fixtureFailures])],
+    status: result.status === "passing" && (parsed.error || parsed.failures.length || fixtureFailed || missing.length || batchError) ? "failing" : result.status,
+    detail: result.detail ?? parsed.error ?? batchError ?? (missing.length ? `No individual result was reported for: ${missing.join(", ")}.` : undefined),
     output: result.output.slice(-OUTPUT_LIMIT),
   };
 }
@@ -224,11 +239,15 @@ function skippedFixtureRun(file: string, step: NarrativeStep, detail: string, ou
   };
 }
 
-function targetedCommands(worktree: string, plan: TestPlan, files: string[]) {
+function targetedCommands(worktree: string, plan: TestPlan, files: string[], resultDirectory: string): TestBatchCommand[] {
   const template = plan.runnerTemplate;
   if (!template) return [];
-  return files.filter((file) => existsSync(resolve(worktree, file)))
-    .map((file) => plan.adapter.target(worktree, template, file, plan.fixtureFormat));
+  const present = files.filter((file) => existsSync(resolve(worktree, file)));
+  if (plan.batch) return plan.adapter.batch!(worktree, template, present, plan.fixtureFormat, resultDirectory);
+  return present.map((file) => {
+    const target = plan.adapter.target(worktree, template, file, plan.fixtureFormat);
+    return { files: [file], command: target.command, detail: target.detail };
+  });
 }
 
 function configuredTimeout(): number {
@@ -249,6 +268,8 @@ export function executeNarrativeTests(
   mkdirSync(worktreeDirectory, { recursive: true });
   const temporaryRoot = mkdtempSync(join(worktreeDirectory, "heptapod-ingest-"));
   const worktree = join(temporaryRoot, "worktree");
+  const resultDirectory = join(temporaryRoot, "results");
+  mkdirSync(resultDirectory);
   let registered = false;
   const timeoutMs = configuredTimeout();
   try {
@@ -274,8 +295,15 @@ export function executeNarrativeTests(
     }
 
     const changedTestFiles = new Set<string>();
+    const changesSinceBuild = new Set<string>();
+    let buildReady = false;
     for (const [index, step] of manifest.steps.entries()) {
       const patch = step.diff ? readArtifact(manifestPath, step.diff) : null;
+      const changedPaths = patch ? splitPatchFiles(patch.toString("utf8")).flatMap(file => {
+        const rename = patchRename(file.patch);
+        return rename ? [file.path, rename.from] : [file.path];
+      }) : [];
+      for (const path of changedPaths) changesSinceBuild.add(path);
       if (patch) {
         run("git", ["apply", "--index", "--binary", "--whitespace=nowarn", "--recount", "-"], {
           cwd: worktree,
@@ -287,7 +315,8 @@ export function executeNarrativeTests(
           if (file.isFixture !== false) changedTestFiles.add(file.path);
         }
       }
-      if (plan.setup.length > 0 && patch && plan.adapter.dependenciesChanged?.(splitPatchFiles(patch.toString("utf8")).map((file) => file.path))) {
+      if (plan.setup.length > 0 && patch && plan.adapter.dependenciesChanged?.(changedPaths)) {
+        if (plan.rebuild !== "never") buildReady = false;
         onProgress(`Refreshing dependencies after step ${index + 1}/${manifest.steps.length}`);
         for (const setup of plan.setup) {
           setupFailure = executeCommand(setup, worktree, timeoutMs, repo);
@@ -297,7 +326,7 @@ export function executeNarrativeTests(
       }
       const finalStep = index === manifest.steps.length - 1;
       const files = [...changedTestFiles];
-      const fixtureCommands = targetedCommands(worktree, plan, files);
+      const fixtureCommands = targetedCommands(worktree, plan, files, resultDirectory);
       if (!dependenciesReady) {
         const detail = `${plan.setup.at(-1)?.display ?? "Test preparation"} failed; tests were not run.`;
         const run = skippedRun(
@@ -310,13 +339,19 @@ export function executeNarrativeTests(
         runsByStep.set(step.id, run);
       } else {
         const buildResults: Array<{ command: TestCommand; result: CommandResult }> = [];
-        if (finalStep || fixtureCommands.some(({ command }) => command)) {
+        const needsBuild = !buildReady || (plan.rebuild === "always" ? changesSinceBuild.size > 0
+          : plan.rebuild === "auto" && plan.adapter.requiresRebuild([...changesSinceBuild]));
+        if ((finalStep || fixtureCommands.some(({ command }) => command)) && needsBuild) {
           for (const command of plan.build) {
             onProgress(`Building after step ${index + 1}/${manifest.steps.length}: ${command.display}`);
             const result = executeCommand(command, worktree, timeoutMs, repo);
             buildResults.push({ command, result });
             if (result.status !== "passing") break;
           }
+          buildReady = buildResults.every(({ result }) => result.status === "passing");
+          if (buildReady) changesSinceBuild.clear();
+        } else if (plan.build.length && (finalStep || fixtureCommands.some(({ command }) => command))) {
+          onProgress(`Reusing build after step ${index + 1}/${manifest.steps.length} (${plan.rebuild} runner policy)`);
         }
         const buildFailed = buildResults.some(({ result }) => result.status !== "passing");
         if (buildFailed) {
@@ -328,20 +363,37 @@ export function executeNarrativeTests(
         } else {
           const fixtureRuns: TestFixtureRun[] = [];
           const executedFixtures: Array<{ command: TestCommand; result: CommandResult }> = [];
-          for (const { file, command, detail } of fixtureCommands) {
+          for (const { files: batchFiles, command, detail } of fixtureCommands) {
             if (!command) {
-              fixtureRuns.push(skippedFixtureRun(file, step, detail ?? "The runner cannot select this fixture."));
+              fixtureRuns.push(...batchFiles.map(file => skippedFixtureRun(file, step, detail ?? "The runner cannot select this fixture.")));
               continue;
             }
-            onProgress(`Running test file after step ${index + 1}/${manifest.steps.length}: ${file}`);
-            const result = executeTestCommand(command, worktree, timeoutMs, repo, plan.adapter);
+            onProgress(`Running ${batchFiles.length > 1 ? `${batchFiles.length} test fixtures in a batch` : "test file"} after step ${index + 1}/${manifest.steps.length}: ${batchFiles.join(", ")}`);
+            const result = executeTestCommand(command, worktree, timeoutMs, repo, plan.adapter,
+              plan.batch ? { files: batchFiles, format: plan.fixtureFormat } : undefined);
             executedFixtures.push({ command, result });
-            fixtureRuns.push(buildFixtureRun(file, command, result, step));
+            for (const file of batchFiles) {
+              if (!plan.batch || result.status === "timed-out" || result.batchError) {
+                fixtureRuns.push(buildFixtureRun(file, command, result, step));
+                continue;
+              }
+              const fixture = result.fixtures?.[file];
+              if (fixture?.status === "not-run") {
+                fixtureRuns.push(skippedFixtureRun(file, step, fixture.detail ?? "This fixture was skipped by the test runner.", result.output));
+                continue;
+              }
+              fixtureRuns.push(buildFixtureRun(file, command, {
+                ...result, status: fixture?.status ?? "failing", durationMs: fixture?.durationMs ?? 0,
+                observedFailures: fixture?.failures ?? [],
+                detail: fixture ? [fixture.detail, batchFiles.length > 1 ? `Executed in a batch of ${batchFiles.length} fixtures; command output and exit code are shared.` : undefined].filter(Boolean).join(" ") || undefined
+                  : "The test runner did not report a result for this fixture.",
+              }, step));
+            }
           }
           if (finalStep) {
             onProgress(`Running the full ${plan.full.display} suite after step ${index + 1}/${manifest.steps.length}: ${step.title}`);
             const fullResult = executeTestCommand(plan.full, worktree, timeoutMs, repo, plan.adapter);
-            const result = combineCommandResults([...buildResults, { command: plan.full, result: fullResult }]);
+            const result = combineCommandResults([...buildResults, ...executedFixtures, { command: plan.full, result: fullResult }]);
             runsByStep.set(step.id, buildStepTestRun(result.command, result, step, "full-suite", files, fixtureRuns));
           } else if (executedFixtures.length === 0) {
             const detail = files.length ? "No runnable test fixtures were found for this step." : "No changed test files have been introduced by this step.";
@@ -355,7 +407,12 @@ export function executeNarrativeTests(
           }
         }
       }
-      run("git", ["checkout-index", "-a", "-f"], { cwd: worktree });
+      // Preserve mtimes for incremental compilers; restore only files tests/builds modified.
+      const dirty = run("git", ["diff", "--name-only", "--no-renames", "-z"], { cwd: worktree }).stdout;
+      if (dirty.length) {
+        run("git", ["checkout-index", "-f", "-z", "--stdin"], { cwd: worktree, input: dirty });
+        if (plan.rebuild !== "never") buildReady = false;
+      }
     }
 
     return {

@@ -1,3 +1,4 @@
+import { assertStepExplanations } from "./explanations.js";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, extname, relative, resolve } from "node:path";
 import { assertStepFileCoverage, stepFileReferences } from "./file-coverage.js";
@@ -221,7 +222,9 @@ export function resolveGeneratedFiles(repo: string, manifest: NarrativeManifest,
 
 export function assertNarrativeFileCoverage(manifest: NarrativeManifest, manifestPath: string, generated: ReadonlySet<string>): void {
   for (const step of manifest.steps) {
-    if (step.diff) assertStepFileCoverage(step, splitPatchFiles(readArtifact(manifestPath, step.diff).toString("utf8")), generated);
+    const files = step.diff ? splitPatchFiles(readArtifact(manifestPath, step.diff).toString("utf8")) : [];
+    if (step.diff) assertStepFileCoverage(step, files, generated);
+    assertStepExplanations(step, files, generated);
     for (const path of extractRepositoryFileReferences(readStepMarkdown(step, manifestPath))) {
       assert(!generated.has(path), `step ${step.id} links to ${path}, which is excluded from review by the linguist-generated Git attribute. Remove the file link.`);
     }

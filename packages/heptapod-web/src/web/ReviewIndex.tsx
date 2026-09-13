@@ -46,7 +46,7 @@ export function ReviewIndex({ reviews: initialReviews, setup, openPullRequests }
         <h1 className="review-index-title">HEPTAPOD</h1>
         {setup}
       </header>
-      <h2 className="review-section-title">Imported reviews</h2>
+      <h2 className="review-section-title">Awaiting review</h2>
       {reviews.length === 0
         ? <div className="empty-state">No reviews have been ingested yet.</div>
         : <div className="review-list">

@@ -19,6 +19,10 @@ All paths in `narrative.json` are relative to the artifact directory and must st
 
 Markdown bodies may link to source files using repository-root-relative destinations, such as ``[`upload.ts`](src/upload.ts)``. During ingestion, links that resolve in the reconstructed repository state after that step become compact file controls in the viewer. They can reference unchanged files as well as files in the step diff. Unresolved paths remain ordinary Markdown links.
 
+External references are welcome in step bodies and other explanations, including section/interface descriptions, before/after text, and inline `explanations[].text`. Use descriptive Markdown links to related PRs, standards sections, API documentation, or design discussions; explain why the reference matters and prefer the specific relevant page or anchor. For example: `Retries follow the [HTTP idempotency rules](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2).` Hint bubbles render HTTP(S) Markdown links as clickable links that open in a new tab.
+
+Before authoring, briefly inspect a few prior commits/diffs for the main affected paths at the pinned base, following a related PR only when directly relevant. Include at most one or two sentences of historical context where an earlier design, migration, regression, or constraint helps explain this change. Link to the supporting commit/PR when available; distinguish evidence from inference and omit background that does not help the review. This is a focused check, not a history survey.
+
 ## Manifest
 
 ```json
@@ -86,6 +90,28 @@ Every step contains:
 Allowed check statuses are `passing`, `failing`, `not-run`, `blocked`, and `not-applicable`. The required `basis` is `observed` or `expected`. `command`, `detail`, and `evidence` are optional. Evidence entries use `kind: "image"`, `kind: "video"`, or `kind: "link"` plus `label`, `url`, and an optional `sourceUrl`. Use the direct GitHub attachment URL for screenshot or video evidence rather than substituting the enclosing PR URL; videos render with inline playback controls.
 
 Any step may also have a top-level `evidence` array with the same shape. Use it for reference screenshots and links from the PR description, author comments, or commit messages that clarify a context step. Use check-level evidence when it proves a specific manual procedure.
+
+## Optional inline explanations
+
+Patch-bearing steps may include an `explanations` array:
+
+```json
+{
+  "explanations": [
+    {
+      "file": "src/upload.ts",
+      "side": "RIGHT",
+      "startLine": 42,
+      "endLine": 46,
+      "text": "The same request key survives retries so a timeout after a successful upload cannot create a second object. The caller migration in the next step relies on this guarantee."
+    }
+  ]
+}
+```
+
+`file` must be a non-generated file in that step's patch. For renamed files, use the destination path on either side. `LEFT` refers to the source immediately before the step, `RIGHT` immediately after it. `startLine` is a positive, one-based source line number. `endLine` is inclusive and defaults to `startLine`. The entire range must be present in the patch on the selected side (changed or context lines). Binary files and pure moves have no annotatable diff lines. `text` is non-empty prose with optional HTTP(S) Markdown links, limited to 2,000 characters including link markup; aim for one to three sentences. Other markup remains literal text in hint bubbles.
+
+Use these sparingly to explain difficult code, intent, invariants, or the relationship to the larger change. They are authoring metadata, not source-code edits or GitHub reviewer comments. Omit the array when it adds no useful context. The viewer places a bubble at the first line, reveals the text on hover/focus/tap, and highlights the range while open. Multiple explanations starting on the same displayed row share a bubble.
 
 ## Description and manual steps
 
@@ -157,6 +183,8 @@ Describe the changed interface separately from every updated callsite. Interface
 ```
 
 `before`, `after`, and interface `file` are optional. `before` and `after` contain Markdown: use normal prose, inline code, fenced code with an explicit language, or both. Do not assume the viewer treats the whole value as source code. Use `file` as the source only when a specific API or implementation file triggers that section's caller migrations. Omit it for a distributed set of small migrations with no single source; the viewer then omits the Source group. `interfaces` must be non-empty unless the entire patch is generated; every interface requires a `callsites` array, and the step must contain at least one callsite across its interface sections. Step-level `callsites` are invalid. `callsites[].change` is optional and may be `added`, `removed`, `changed`, or `moved`; when omitted, Heptapod infers it from whether the containing file was added, deleted, modified, or renamed. Rename metadata takes precedence over a declared change.
+
+For new APIs and callsite conventions, prefer small paired examples in `interfaces[].before` and `interfaces[].after` when code makes the migration clearer than prose alone. Show a representative old/new signature, options object, or call for the same task, using the actual API from each step state. Keep examples focused on the changed convention; explain any non-obvious reason in a short accompanying sentence. Fenced blocks with an explicit language render as full-width, syntax-highlighted blocks inside their respective Before/After containers. Inline backticks render inline code, so use fences for multiline examples. In JSON strings, encode line breaks as `\n`, as in the example above.
 
 ## Implementation steps
 

@@ -1,0 +1,1130 @@
+[
+  {
+    "name": "block-add",
+    "path": "example.ts",
+    "before": "start();\nfinish();\n",
+    "after": "start();\nif (ready) {\n  work();\n\n  save();\n}\nfinish();\n",
+    "output": {
+      "aligned_lines": [
+        [
+          0,
+          0
+        ],
+        [
+          null,
+          1
+        ],
+        [
+          null,
+          2
+        ],
+        [
+          null,
+          3
+        ],
+        [
+          null,
+          4
+        ],
+        [
+          null,
+          5
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          2,
+          7
+        ]
+      ],
+      "chunks": [
+        [
+          {
+            "rhs": {
+              "line_number": 1,
+              "changes": [
+                {
+                  "start": 0,
+                  "end": 2,
+                  "content": "if",
+                  "highlight": "keyword"
+                },
+                {
+                  "start": 3,
+                  "end": 4,
+                  "content": "(",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 4,
+                  "end": 9,
+                  "content": "ready",
+                  "highlight": "normal"
+                },
+                {
+                  "start": 9,
+                  "end": 10,
+                  "content": ")",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 11,
+                  "end": 12,
+                  "content": "{",
+                  "highlight": "delimiter"
+                }
+              ]
+            }
+          },
+          {
+            "rhs": {
+              "line_number": 2,
+              "changes": [
+                {
+                  "start": 2,
+                  "end": 6,
+                  "content": "work",
+                  "highlight": "normal"
+                },
+                {
+                  "start": 6,
+                  "end": 7,
+                  "content": "(",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 7,
+                  "end": 8,
+                  "content": ")",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 8,
+                  "end": 9,
+                  "content": ";",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          },
+          {
+            "rhs": {
+              "line_number": 4,
+              "changes": [
+                {
+                  "start": 2,
+                  "end": 6,
+                  "content": "save",
+                  "highlight": "normal"
+                },
+                {
+                  "start": 6,
+                  "end": 7,
+                  "content": "(",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 7,
+                  "end": 8,
+                  "content": ")",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 8,
+                  "end": 9,
+                  "content": ";",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          },
+          {
+            "rhs": {
+              "line_number": 5,
+              "changes": [
+                {
+                  "start": 0,
+                  "end": 1,
+                  "content": "}",
+                  "highlight": "delimiter"
+                }
+              ]
+            }
+          }
+        ]
+      ],
+      "language": "TypeScript",
+      "path": "example.ts",
+      "status": "changed"
+    },
+    "native": "example.ts --- TypeScript\n1 1 start();\n. 2 if (ready) {\n. 3   work();\n. 4 \n. 5   save();\n. 6 }\n2 7 finish();\n\n",
+    "inline": "example.ts --- TypeScript\n1    start();\n   2 if (ready) {\n   3   work();\n   5   save();\n   6 }\n   7 finish();\n\n"
+  },
+  {
+    "name": "block-remove",
+    "path": "example.ts",
+    "before": "start();\nif (ready) {\n  work();\n\n  save();\n}\nfinish();\n",
+    "after": "start();\nfinish();\n",
+    "output": {
+      "aligned_lines": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          null
+        ],
+        [
+          2,
+          null
+        ],
+        [
+          3,
+          null
+        ],
+        [
+          4,
+          null
+        ],
+        [
+          5,
+          null
+        ],
+        [
+          6,
+          1
+        ],
+        [
+          7,
+          2
+        ]
+      ],
+      "chunks": [
+        [
+          {
+            "lhs": {
+              "line_number": 1,
+              "changes": [
+                {
+                  "start": 0,
+                  "end": 2,
+                  "content": "if",
+                  "highlight": "keyword"
+                },
+                {
+                  "start": 3,
+                  "end": 4,
+                  "content": "(",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 4,
+                  "end": 9,
+                  "content": "ready",
+                  "highlight": "normal"
+                },
+                {
+                  "start": 9,
+                  "end": 10,
+                  "content": ")",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 11,
+                  "end": 12,
+                  "content": "{",
+                  "highlight": "delimiter"
+                }
+              ]
+            }
+          },
+          {
+            "lhs": {
+              "line_number": 2,
+              "changes": [
+                {
+                  "start": 2,
+                  "end": 6,
+                  "content": "work",
+                  "highlight": "normal"
+                },
+                {
+                  "start": 6,
+                  "end": 7,
+                  "content": "(",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 7,
+                  "end": 8,
+                  "content": ")",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 8,
+                  "end": 9,
+                  "content": ";",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          },
+          {
+            "lhs": {
+              "line_number": 4,
+              "changes": [
+                {
+                  "start": 2,
+                  "end": 6,
+                  "content": "save",
+                  "highlight": "normal"
+                },
+                {
+                  "start": 6,
+                  "end": 7,
+                  "content": "(",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 7,
+                  "end": 8,
+                  "content": ")",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 8,
+                  "end": 9,
+                  "content": ";",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          },
+          {
+            "lhs": {
+              "line_number": 5,
+              "changes": [
+                {
+                  "start": 0,
+                  "end": 1,
+                  "content": "}",
+                  "highlight": "delimiter"
+                }
+              ]
+            }
+          }
+        ]
+      ],
+      "language": "TypeScript",
+      "path": "example.ts",
+      "status": "changed"
+    },
+    "native": "example.ts --- TypeScript\n1 1 start();\n2 . if (ready) {\n3 .   work();\n4 . \n5 .   save();\n6 . }\n7 2 finish();\n\n",
+    "inline": "example.ts --- TypeScript\n1    start();\n2    if (ready) {\n3      work();\n5      save();\n6    }\n   2 finish();\n\n"
+  },
+  {
+    "name": "cpp",
+    "path": "example.cpp",
+    "before": "int value(int x) {\n  return x + 1;\n}\n",
+    "after": "int value(int x) {\n  return x + 2;\n}\n",
+    "output": {
+      "aligned_lines": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          3,
+          3
+        ]
+      ],
+      "chunks": [
+        [
+          {
+            "lhs": {
+              "line_number": 1,
+              "changes": [
+                {
+                  "start": 13,
+                  "end": 14,
+                  "content": "1",
+                  "highlight": "normal"
+                }
+              ]
+            },
+            "rhs": {
+              "line_number": 1,
+              "changes": [
+                {
+                  "start": 13,
+                  "end": 14,
+                  "content": "2",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          }
+        ]
+      ],
+      "language": "C++",
+      "path": "example.cpp",
+      "status": "changed"
+    },
+    "native": "example.cpp --- C++\n1 int value(int x) {         1 int value(int x) {\n2   return x + 1;            2   return x + 2;\n3 }                          3 }\n\n",
+    "inline": "example.cpp --- C++\n1    int value(int x) {\n2      return x + 1;\n   2   return x + 2;\n   3 }\n\n"
+  },
+  {
+    "name": "delete",
+    "path": "example.ts",
+    "before": "const x = 1;\n\nconst y = 2;\n",
+    "after": "",
+    "output": {
+      "language": "TypeScript",
+      "path": "example.ts",
+      "status": "deleted"
+    },
+    "native": "example.ts --- TypeScript\n1 const x = 1;\n2 \n3 const y = 2;\n4 \n\n",
+    "inline": "example.ts --- TypeScript\n1    const x = 1;\n3    const y = 2;\n   1 \n\n"
+  },
+  {
+    "name": "format",
+    "path": "example.ts",
+    "before": "const x = 1;\n",
+    "after": "const x =\n  1;\n",
+    "output": {
+      "language": "TypeScript",
+      "path": "example.ts",
+      "status": "unchanged"
+    },
+    "native": "example.ts --- TypeScript\nNo syntactic changes.\n\n",
+    "inline": "example.ts --- TypeScript\nNo syntactic changes.\n\n"
+  },
+  {
+    "name": "insert",
+    "path": "example.ts",
+    "before": "start();\nfinish();\n",
+    "after": "start();\nwork();\nfinish();\n",
+    "output": {
+      "aligned_lines": [
+        [
+          0,
+          0
+        ],
+        [
+          null,
+          1
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          2,
+          3
+        ]
+      ],
+      "chunks": [
+        [
+          {
+            "rhs": {
+              "line_number": 1,
+              "changes": [
+                {
+                  "start": 0,
+                  "end": 4,
+                  "content": "work",
+                  "highlight": "normal"
+                },
+                {
+                  "start": 4,
+                  "end": 5,
+                  "content": "(",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 5,
+                  "end": 6,
+                  "content": ")",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 6,
+                  "end": 7,
+                  "content": ";",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          }
+        ]
+      ],
+      "language": "TypeScript",
+      "path": "example.ts",
+      "status": "changed"
+    },
+    "native": "example.ts --- TypeScript\n1 1 start();\n. 2 work();\n2 3 finish();\n\n",
+    "inline": "example.ts --- TypeScript\n1    start();\n   2 work();\n   3 finish();\n\n"
+  },
+  {
+    "name": "new",
+    "path": "example.ts",
+    "before": "",
+    "after": "const x = 1;\n\nconst y = 2;\n",
+    "output": {
+      "language": "TypeScript",
+      "path": "example.ts",
+      "status": "created"
+    },
+    "native": "example.ts --- TypeScript\n1 const x = 1;\n2 \n3 const y = 2;\n4 \n\n",
+    "inline": "example.ts --- TypeScript\n1    \n   1 const x = 1;\n   3 const y = 2;\n\n"
+  },
+  {
+    "name": "reflow",
+    "path": "example.ts",
+    "before": "const a = foo(1, 2);\nconst b = 3;\n",
+    "after": "const a = foo(\n  1, 2\n);\nconst b = 4;\n",
+    "output": {
+      "aligned_lines": [
+        [
+          0,
+          0
+        ],
+        [
+          null,
+          1
+        ],
+        [
+          null,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          2,
+          4
+        ]
+      ],
+      "chunks": [
+        [
+          {
+            "lhs": {
+              "line_number": 1,
+              "changes": [
+                {
+                  "start": 10,
+                  "end": 11,
+                  "content": "3",
+                  "highlight": "normal"
+                }
+              ]
+            },
+            "rhs": {
+              "line_number": 3,
+              "changes": [
+                {
+                  "start": 10,
+                  "end": 11,
+                  "content": "4",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          }
+        ]
+      ],
+      "language": "TypeScript",
+      "path": "example.ts",
+      "status": "changed"
+    },
+    "native": "example.ts --- TypeScript\n1 const a = foo(1, 2);       1 const a = foo(\n.                            2   1, 2\n.                            3 );\n2 const b = 3;               4 const b = 4;\n\n",
+    "inline": "example.ts --- TypeScript\n1    const a = foo(1, 2);\n2    const b = 3;\n   4 const b = 4;\n\n"
+  },
+  {
+    "name": "remove",
+    "path": "example.ts",
+    "before": "start();\nwork();\nfinish();\n",
+    "after": "start();\nfinish();\n",
+    "output": {
+      "aligned_lines": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          null
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          3,
+          2
+        ]
+      ],
+      "chunks": [
+        [
+          {
+            "lhs": {
+              "line_number": 1,
+              "changes": [
+                {
+                  "start": 0,
+                  "end": 4,
+                  "content": "work",
+                  "highlight": "normal"
+                },
+                {
+                  "start": 4,
+                  "end": 5,
+                  "content": "(",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 5,
+                  "end": 6,
+                  "content": ")",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 6,
+                  "end": 7,
+                  "content": ";",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          }
+        ]
+      ],
+      "language": "TypeScript",
+      "path": "example.ts",
+      "status": "changed"
+    },
+    "native": "example.ts --- TypeScript\n1 1 start();\n2 . work();\n3 2 finish();\n\n",
+    "inline": "example.ts --- TypeScript\n1    start();\n2    work();\n   2 finish();\n\n"
+  },
+  {
+    "name": "rename",
+    "path": "example.ts",
+    "before": "if (coolant.length > 0) {\n  entries.push(component(WidgetCoolantPorts, { ports: coolant }));\n}\n",
+    "after": "if (liquid.length > 0) {\n  entries.push(component(WidgetLiquidPorts, { ports: liquid }));\n}\n",
+    "output": {
+      "aligned_lines": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          3,
+          3
+        ]
+      ],
+      "chunks": [
+        [
+          {
+            "lhs": {
+              "line_number": 0,
+              "changes": [
+                {
+                  "start": 4,
+                  "end": 11,
+                  "content": "coolant",
+                  "highlight": "normal"
+                }
+              ]
+            },
+            "rhs": {
+              "line_number": 0,
+              "changes": [
+                {
+                  "start": 4,
+                  "end": 10,
+                  "content": "liquid",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          },
+          {
+            "lhs": {
+              "line_number": 1,
+              "changes": [
+                {
+                  "start": 25,
+                  "end": 43,
+                  "content": "WidgetCoolantPorts",
+                  "highlight": "type"
+                },
+                {
+                  "start": 54,
+                  "end": 61,
+                  "content": "coolant",
+                  "highlight": "normal"
+                }
+              ]
+            },
+            "rhs": {
+              "line_number": 1,
+              "changes": [
+                {
+                  "start": 25,
+                  "end": 42,
+                  "content": "WidgetLiquidPorts",
+                  "highlight": "type"
+                },
+                {
+                  "start": 53,
+                  "end": 59,
+                  "content": "liquid",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          }
+        ]
+      ],
+      "language": "TypeScript",
+      "path": "example.ts",
+      "status": "changed"
+    },
+    "native": "example.ts --- TypeScript\n1 if (coolant.length > 0) {                                           1 if (liquid.length > 0) {\n2   entries.push(component(WidgetCoolantPorts, { ports: coolant }));  2   entries.push(component(WidgetLiquidPorts, { ports: liquid }));\n3 }                                                                   3 }\n\n",
+    "inline": "example.ts --- TypeScript\n1    if (coolant.length > 0) {\n2      entries.push(component(WidgetCoolantPorts, { ports: coolant }));\n   1 if (liquid.length > 0) {\n   2   entries.push(component(WidgetLiquidPorts, { ports: liquid }));\n   3 }\n\n"
+  },
+  {
+    "name": "replace",
+    "path": "example.ts",
+    "before": "start();\noldOne();\noldTwo();\nfinish();\n",
+    "after": "start();\nnewOne();\nnewTwo();\nfinish();\n",
+    "output": {
+      "aligned_lines": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          4,
+          4
+        ]
+      ],
+      "chunks": [
+        [
+          {
+            "lhs": {
+              "line_number": 1,
+              "changes": [
+                {
+                  "start": 0,
+                  "end": 6,
+                  "content": "oldOne",
+                  "highlight": "normal"
+                }
+              ]
+            },
+            "rhs": {
+              "line_number": 1,
+              "changes": [
+                {
+                  "start": 0,
+                  "end": 6,
+                  "content": "newOne",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          },
+          {
+            "lhs": {
+              "line_number": 2,
+              "changes": [
+                {
+                  "start": 0,
+                  "end": 6,
+                  "content": "oldTwo",
+                  "highlight": "normal"
+                }
+              ]
+            },
+            "rhs": {
+              "line_number": 2,
+              "changes": [
+                {
+                  "start": 0,
+                  "end": 6,
+                  "content": "newTwo",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          }
+        ]
+      ],
+      "language": "TypeScript",
+      "path": "example.ts",
+      "status": "changed"
+    },
+    "native": "example.ts --- TypeScript\n1 start();                   1 start();\n2 oldOne();                  2 newOne();\n3 oldTwo();                  3 newTwo();\n4 finish();                  4 finish();\n\n",
+    "inline": "example.ts --- TypeScript\n1    start();\n2    oldOne();\n3    oldTwo();\n   2 newOne();\n   3 newTwo();\n   4 finish();\n\n"
+  },
+  {
+    "name": "separate-hunks",
+    "path": "example.ts",
+    "before": "oldStart();\nkeep0();\nkeep1();\nkeep2();\nkeep3();\nkeep4();\nkeep5();\nkeep6();\nkeep7();\nkeep8();\nkeep9();\nkeep10();\nkeep11();\nkeep12();\nkeep13();\nkeep14();\nkeep15();\nkeep16();\nkeep17();\nfinish();\n",
+    "after": "newStart();\nkeep0();\nkeep1();\nkeep2();\nkeep3();\nkeep4();\nkeep5();\nkeep6();\nkeep7();\nkeep8();\nkeep9();\nkeep10();\nkeep11();\nkeep12();\nkeep13();\nkeep14();\nkeep15();\nkeep16();\nkeep17();\nextra();\nfinish();\n",
+    "output": {
+      "aligned_lines": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          3,
+          3
+        ],
+        [
+          4,
+          4
+        ],
+        [
+          5,
+          5
+        ],
+        [
+          6,
+          6
+        ],
+        [
+          7,
+          7
+        ],
+        [
+          8,
+          8
+        ],
+        [
+          9,
+          9
+        ],
+        [
+          10,
+          10
+        ],
+        [
+          11,
+          11
+        ],
+        [
+          12,
+          12
+        ],
+        [
+          13,
+          13
+        ],
+        [
+          14,
+          14
+        ],
+        [
+          15,
+          15
+        ],
+        [
+          16,
+          16
+        ],
+        [
+          17,
+          17
+        ],
+        [
+          18,
+          18
+        ],
+        [
+          null,
+          19
+        ],
+        [
+          19,
+          20
+        ],
+        [
+          20,
+          21
+        ]
+      ],
+      "chunks": [
+        [
+          {
+            "lhs": {
+              "line_number": 0,
+              "changes": [
+                {
+                  "start": 0,
+                  "end": 8,
+                  "content": "oldStart",
+                  "highlight": "normal"
+                }
+              ]
+            },
+            "rhs": {
+              "line_number": 0,
+              "changes": [
+                {
+                  "start": 0,
+                  "end": 8,
+                  "content": "newStart",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          }
+        ],
+        [
+          {
+            "rhs": {
+              "line_number": 19,
+              "changes": [
+                {
+                  "start": 0,
+                  "end": 5,
+                  "content": "extra",
+                  "highlight": "normal"
+                },
+                {
+                  "start": 5,
+                  "end": 6,
+                  "content": "(",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 6,
+                  "end": 7,
+                  "content": ")",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 7,
+                  "end": 8,
+                  "content": ";",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          }
+        ]
+      ],
+      "language": "TypeScript",
+      "path": "example.ts",
+      "status": "changed"
+    },
+    "native": "example.ts --- 1/2 --- TypeScript\n 1 oldStart();                 1 newStart();\n 2 keep0();                    2 keep0();\n 3 keep1();                    3 keep1();\n 4 keep2();                    4 keep2();\n\nexample.ts --- 2/2 --- TypeScript\n17 17 keep15();\n18 18 keep16();\n19 19 keep17();\n.. 20 extra();\n20 21 finish();\n\n",
+    "inline": "example.ts --- 1/2 --- TypeScript\n 1    oldStart();\n    1 newStart();\n    2 keep0();\n    3 keep1();\n    4 keep2();\n    5 keep3();\n\nexample.ts --- 2/2 --- TypeScript\n16    keep14();\n17    keep15();\n18    keep16();\n19    keep17();\n   20 extra();\n   21 finish();\n\n"
+  },
+  {
+    "name": "unicode",
+    "path": "example.ts",
+    "before": "\tconst text = \"😀\"; const café = 1;\r\n",
+    "after": "\tconst text = \"😀\"; const café = 2;\r\n",
+    "output": {
+      "aligned_lines": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "chunks": [
+        [
+          {
+            "lhs": {
+              "line_number": 0,
+              "changes": [
+                {
+                  "start": 36,
+                  "end": 37,
+                  "content": "1",
+                  "highlight": "normal"
+                }
+              ]
+            },
+            "rhs": {
+              "line_number": 0,
+              "changes": [
+                {
+                  "start": 36,
+                  "end": 37,
+                  "content": "2",
+                  "highlight": "normal"
+                }
+              ]
+            }
+          }
+        ]
+      ],
+      "language": "TypeScript",
+      "path": "example.ts",
+      "status": "changed"
+    },
+    "native": "example.ts --- TypeScript\n1  const text = \"😀\"; const café = 1;  1  const text = \"😀\"; const café = 2;\n\n",
+    "inline": "example.ts --- TypeScript\n1     const text = \"😀\"; const café = 1;\n   1  const text = \"😀\"; const café = 2;\n\n"
+  },
+  {
+    "name": "unwrap",
+    "path": "example.ts",
+    "before": "const total = round(price + tax);\n",
+    "after": "const total = price + tax;\n",
+    "output": {
+      "aligned_lines": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "chunks": [
+        [
+          {
+            "lhs": {
+              "line_number": 0,
+              "changes": [
+                {
+                  "start": 14,
+                  "end": 19,
+                  "content": "round",
+                  "highlight": "normal"
+                },
+                {
+                  "start": 19,
+                  "end": 20,
+                  "content": "(",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 31,
+                  "end": 32,
+                  "content": ")",
+                  "highlight": "delimiter"
+                }
+              ]
+            },
+            "rhs": {
+              "line_number": 0,
+              "changes": []
+            }
+          }
+        ]
+      ],
+      "language": "TypeScript",
+      "path": "example.ts",
+      "status": "changed"
+    },
+    "native": "example.ts --- TypeScript\n1 const total = round(price + tax);\n\n",
+    "inline": "example.ts --- TypeScript\n1    const total = round(price + tax);\n   1 const total = price + tax;\n\n"
+  },
+  {
+    "name": "wrap",
+    "path": "example.ts",
+    "before": "const total = price + tax;\n",
+    "after": "const total = round(price + tax);\n",
+    "output": {
+      "aligned_lines": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "chunks": [
+        [
+          {
+            "lhs": {
+              "line_number": 0,
+              "changes": []
+            },
+            "rhs": {
+              "line_number": 0,
+              "changes": [
+                {
+                  "start": 14,
+                  "end": 19,
+                  "content": "round",
+                  "highlight": "normal"
+                },
+                {
+                  "start": 19,
+                  "end": 20,
+                  "content": "(",
+                  "highlight": "delimiter"
+                },
+                {
+                  "start": 31,
+                  "end": 32,
+                  "content": ")",
+                  "highlight": "delimiter"
+                }
+              ]
+            }
+          }
+        ]
+      ],
+      "language": "TypeScript",
+      "path": "example.ts",
+      "status": "changed"
+    },
+    "native": "example.ts --- TypeScript\n1 const total = round(price + tax);\n\n",
+    "inline": "example.ts --- TypeScript\n1    const total = price + tax;\n   1 const total = round(price + tax);\n\n"
+  }
+]

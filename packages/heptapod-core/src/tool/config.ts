@@ -9,10 +9,13 @@ export interface HeptapodCommandConfig {
 
 export interface HeptapodTestRunnerConfig extends HeptapodCommandConfig {
   format?: RunnerFormat;
+  batch?: boolean;
+  rebuild?: "auto" | "always" | "never";
 }
 
 export interface HeptapodConfig {
   agents?: { preferenceOrder?: AgentId[] };
+  diff?: { engine?: "difftastic" | "standard"; executable?: string; timeoutMs?: number };
   test?: {
     prerequisites?: HeptapodCommandConfig[];
     build?: HeptapodCommandConfig[];
@@ -37,6 +40,12 @@ export function loadHeptapodConfig(repo: string): HeptapodConfig | null {
   if (!value) return null;
   agentPreferences(value);
   const config = value as HeptapodConfig;
+  if (config.diff !== undefined) {
+    if (!config.diff || typeof config.diff !== "object" || Array.isArray(config.diff)) throw new Error("Invalid .heptapod.json: diff must be an object.");
+    if (config.diff.engine !== undefined && config.diff.engine !== "difftastic" && config.diff.engine !== "standard") throw new Error("Invalid .heptapod.json: diff.engine must be difftastic or standard.");
+    if (config.diff.executable !== undefined && (typeof config.diff.executable !== "string" || !config.diff.executable.trim())) throw new Error("Invalid .heptapod.json: diff.executable must be a non-empty executable path.");
+    if (config.diff.timeoutMs !== undefined && (!Number.isSafeInteger(config.diff.timeoutMs) || config.diff.timeoutMs <= 0)) throw new Error("Invalid .heptapod.json: diff.timeoutMs must be a positive integer.");
+  }
   if (config.test !== undefined) {
     if (!config.test || typeof config.test !== "object" || Array.isArray(config.test)) throw new Error("Invalid .heptapod.json: test must be an object.");
     for (const field of ["prerequisites", "build"] as const) {
@@ -51,6 +60,10 @@ export function loadHeptapodConfig(repo: string): HeptapodConfig | null {
         throw new Error(`Invalid .heptapod.json: test.runner.format must be ${Object.keys(runnerAdapters).join(" or ")}.`);
       }
       try {
+        const runner = runnerAdapters[format ?? "command"];
+        if (config.test.runner.batch !== undefined && typeof config.test.runner.batch !== "boolean") throw new Error("batch must be a boolean.");
+        if (config.test.runner.batch && (!runner.batch || !runner.parseBatchResult)) throw new Error("batching is not supported by this runner format.");
+        if (config.test.runner.rebuild !== undefined && !["auto", "always", "never"].includes(config.test.runner.rebuild)) throw new Error("rebuild must be auto, always or never.");
         runnerAdapters[format ?? "command"].validateCommand?.(config.test.runner.command);
       } catch (error) {
         throw new Error(`Invalid .heptapod.json: test.runner.command: ${error instanceof Error ? error.message : String(error)}`);

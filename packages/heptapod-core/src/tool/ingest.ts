@@ -12,6 +12,8 @@ import { analyzeNarrative } from "./test-analysis.js";
 import { executeNarrativeTests } from "./test-execution.js";
 import { buildReviewUrl } from "./url.js";
 import { verifyNarrative } from "./verify.js";
+import { buildEditorLinks } from "./source-checkout.js";
+import { generateSemanticDiffs } from "./semantic-diff.js";
 
 export interface IngestedReview extends ReadyStoredReview {
   url: string;
@@ -65,6 +67,9 @@ export function ingestNarrative({
       manualEvidence,
       testExecution,
     );
+    progress("Preparing revision checkouts for editor links");
+    model.editorLinks = buildEditorLinks(repo, model);
+    generateSemanticDiffs(repo, model, progress);
     const review = upsertReview(id, model, databasePath);
     return { ...review, url: buildReviewUrl(id, siteUrl) };
   } catch (error) {

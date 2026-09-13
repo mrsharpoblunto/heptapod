@@ -131,6 +131,10 @@ test("capture, validate, ingest, and load an exact narrative stack", () => {
   assert.equal(preparing?.progress, "Preparing review");
   assert.equal(preparing?.payload, null);
   const manifestPath = authorNarrative(repo, base, head, artifact);
+  const explanation = { file: "src/math.js", side: "RIGHT" as const, startLine: 2, text: "Clamp after addition so the result stays inside the requested bounds." };
+  const authored = JSON.parse(readFileSync(manifestPath, "utf8")) as NarrativeManifest;
+  authored.steps.find((step) => step.id === "implement-clamp")!.explanations = [explanation];
+  writeFileSync(manifestPath, JSON.stringify(authored));
   const { manifest } = loadManifest(manifestPath);
   const verification = verifyNarrative(repo, manifest, manifestPath);
   assert.equal(verification.exact, true);
@@ -146,6 +150,9 @@ test("capture, validate, ingest, and load an exact narrative stack", () => {
   });
   assert.equal(ingested.url, "http://127.0.0.1:4321/reviews/42");
   assert.equal(ingested.payload.steps.length, 5);
+  assert.equal(ingested.payload.editorLinks?.["src/math.js"].revision, head);
+  assert.ok(ingested.payload.steps.flatMap((step) => step.fileDiffs).every((file) => file.semanticDiff));
+  assert.match(ingested.payload.editorLinks?.["src/math.js"].url ?? "", /^vscode:\/\/file\//);
   assert.deepEqual(ingested.payload.steps[0].referenceFiles?.map((file) => file.path), ["src/math.js"]);
   assert.match(ingested.payload.steps[0].body, /heptapod-file:src%2Fmath\.js/);
   assert.match(ingested.payload.steps[0].body, /\[missing helper\]\(src\/missing\.js\)/);
@@ -162,6 +169,8 @@ test("capture, validate, ingest, and load an exact narrative stack", () => {
   const implementationFile = ingested.payload.steps
     .find((step) => step.id === "implement-clamp")
     ?.fileDiffs.find((file) => file.path === "src/math.js");
+  assert.deepEqual(implementationFile?.explanations, [explanation]);
+  assert.equal(ingested.payload.steps[0].referenceFiles?.[0].explanations, undefined);
   assert.match(implementationFile?.beforeContent ?? "", /export const add/);
   assert.match(implementationFile?.afterContent ?? "", /export const clamp/);
   const implementation = ingested.payload.steps.find((step) => step.id === "implement-clamp");

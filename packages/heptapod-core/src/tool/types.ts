@@ -91,6 +91,17 @@ export interface NarrativeStep {
   interfaces?: InterfaceChange[];
   sections?: ImplementationSection[];
   evidence?: Evidence[];
+  explanations?: DiffExplanation[];
+}
+
+/** Agent-authored prose anchored to this step's patch, not the final PR revision. */
+export interface DiffExplanation {
+  file: string;
+  side: "LEFT" | "RIGHT";
+  startLine: number;
+  /** Inclusive; omitted for a single-line explanation. */
+  endLine?: number;
+  text: string;
 }
 
 export interface ChangedFile {
@@ -184,7 +195,21 @@ export interface PatchFile {
   patch: string;
   beforeContent?: string | null;
   afterContent?: string | null;
+  semanticDiff?: SemanticDiff;
+  explanations?: DiffExplanation[];
 }
+
+/** Character offsets are UTF-16, line numbers are one-based, and ends are exclusive. */
+export interface SemanticRange { start: number; end: number }
+
+export type SemanticDiff = {
+  status: "ready";
+  language: string;
+  unchanged: boolean;
+  alignment: Array<[number | null, number | null]>;
+  before: Record<number, SemanticRange[]>;
+  after: Record<number, SemanticRange[]>;
+} | { status: "fallback"; reason: string };
 
 export interface PatchStats {
   additions: number;
@@ -209,6 +234,9 @@ export interface RenderModel {
   source: NarrativeManifest["source"] & { stats: PatchStats };
   verification: VerificationResult;
   testExecution?: TestExecutionMetadata;
+  /** Local editor targets at ingestion time; absent on reviews ingested by older versions. */
+  editorLinks?: Record<string, { url: string; revision: string; side: "base" | "head" }>;
+  diffGeneration?: { engine: "difftastic"; version: string | null; ready: number; fallback: number };
   steps: RenderStep[];
 }
 

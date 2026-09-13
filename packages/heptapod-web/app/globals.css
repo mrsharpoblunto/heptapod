@@ -16,6 +16,8 @@
   --border-muted: #d8dee4;
   --accent: #0969da;
   --accent-muted: #ddf4ff;
+  --explanation: #8250df;
+  --explanation-muted: #fbefff;
   --success: #1a7f37;
   --success-muted: #dafbe1;
   --danger: #cf222e;
@@ -58,6 +60,8 @@
     --border-muted: #30363d;
     --accent: #4493f8;
     --accent-muted: rgba(56, 139, 253, 0.15);
+    --explanation: #b993ff;
+    --explanation-muted: rgba(163, 113, 247, 0.15);
     --success: #3fb950;
     --success-muted: rgba(46, 160, 67, 0.15);
     --danger: #f85149;
@@ -248,6 +252,16 @@
   .file-link { @apply flex w-full max-w-full min-w-0 cursor-pointer items-center gap-2 overflow-hidden rounded-md border border-transparent bg-[var(--canvas-subtle)] px-2.5 py-2 text-left; }
   .file-link-inline { @apply mx-0.5 inline-flex w-auto max-w-full items-baseline rounded-md border-[var(--border)] px-2 py-0 align-baseline; line-height: inherit; }
   .file-link-inline .file-link-filename { @apply text-[0.82em]; line-height: inherit; }
+  .file-link-with-editor { position: relative; display: flex; width: 100%; min-width: 0; }
+  .file-link-with-editor > .file-link { padding-right: 34px; }
+  .file-link-with-editor-inline { display: inline-flex; width: auto; max-width: 100%; vertical-align: baseline; }
+  .file-link-with-both-actions > .file-link { padding-right: 56px; }
+  .file-link-actions { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); display: flex; }
+  .vscode-link, .github-file-action { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 3px; color: var(--fg-muted); }
+  .vscode-link:hover, .vscode-link:focus-visible, .github-file-action:hover, .github-file-action:focus-visible { color: var(--accent); background: var(--canvas); }
+  .vscode-link:focus-visible, .github-file-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .file-link-with-editor-inline .file-link-actions a { height: 18px; }
+  .github-file-action svg { width: 14px; height: 14px; }
   .file-link-connected { @apply rounded-b-none border-[var(--border)]; }
   .file-link-connected.connected-collapsed { @apply rounded-bl-md; }
   .file-link:hover, .file-link.active { @apply border-[var(--accent)] bg-[var(--accent-muted)]; }
@@ -258,11 +272,14 @@
   .file-link-move-arrow { @apply shrink-0 whitespace-pre; }
   .file-link-filename { @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--fg)]; flex: 0 1 auto; }
   .before-after { @apply my-3 grid grid-cols-2 gap-2; }
-  .before-after > div > span { @apply mb-1 block text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--fg-muted)]; }
-  .before-after > div > .markdown { @apply h-[calc(100%_-_16px)] rounded-md border border-[var(--border)] bg-[var(--canvas-subtle)] p-2.5 text-xs text-[var(--fg)]; }
-  .before-after .markdown > :first-child { @apply mt-0; }
-  .before-after .markdown > :last-child { @apply mb-0; }
-  .before-after pre { @apply m-0 overflow-auto rounded-md border border-[var(--border)] bg-[var(--canvas-inset)] p-2.5 text-[10px] text-[var(--fg)]; }
+  .before-after > div { @apply flex min-w-0 flex-col; }
+  .before-after > div > span { @apply mb-1 block text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--fg-muted)]; }
+  .before-after > div > .markdown { @apply w-full min-w-0 max-w-none flex-1 overflow-hidden rounded-md border border-[var(--border)] bg-[var(--canvas-subtle)] text-[15px] text-[var(--fg)]; }
+  .before-after .markdown > :not(pre) { @apply m-3; }
+  .before-after pre { @apply my-3 w-full overflow-auto rounded-none border-x-0 border-y border-[var(--border)] bg-[var(--canvas-inset)] p-3 text-xs leading-[1.55] text-[var(--fg)]; }
+  .before-after pre:first-child { @apply mt-0 border-t-0; }
+  .before-after pre:last-child { @apply mb-0; }
+  .before-after pre code { display: block; font-size: inherit; line-height: inherit; }
 
   .hljs { @apply bg-transparent text-[var(--fg)]; }
   .hljs-comment, .hljs-quote { color: var(--syntax-comment); }
@@ -283,10 +300,12 @@
   .inline-diff-toggle.collapsed { @apply rounded-br-md; }
   .diff-shell { @apply min-w-0; }
   .moved-file-content { @apply rounded-t-none p-6 text-center text-[var(--fg-muted)]; }
-  .diff { @apply overflow-auto rounded-b-md border border-t-0 border-[var(--border)] bg-[var(--canvas)] font-mono text-xs leading-[1.55]; }
-  .diff-line { @apply grid min-h-[17px] grid-cols-[42px_42px_minmax(max-content,1fr)]; }
-  .diff-pure .diff-line { @apply grid-cols-[42px_minmax(max-content,1fr)]; }
+  .diff { --diff-gutter-width: 42px; @apply overflow-auto rounded-b-md border border-t-0 border-[var(--border)] bg-[var(--canvas)] font-mono text-xs leading-[1.55]; }
+  .diff-line { @apply grid min-h-[17px]; grid-template-columns: var(--diff-gutter-width) var(--diff-gutter-width) minmax(max-content, 1fr); }
+  .diff-pure .diff-line { grid-template-columns: var(--diff-gutter-width) minmax(max-content, 1fr); }
   .diff-line code { @apply whitespace-pre px-2.5 text-[var(--fg)]; }
+  .diff > .diff-lines[data-columns="1"] + .diff-lines[data-columns="2"],
+  .diff > .diff-lines[data-columns="2"] + .diff-lines[data-columns="1"] { border-top: 1px solid var(--border); }
   .line-number { @apply border-r border-[var(--border-muted)] pr-2 text-right font-mono text-[var(--fg-muted)] select-none; }
   .diff-add { background: var(--diff-add); }
   .diff-add code { @apply text-[var(--fg)]; }
@@ -294,6 +313,35 @@
   .diff-del { background: var(--diff-delete); }
   .diff-del code { @apply text-[var(--fg)]; }
   .diff-del .diff-marker { @apply text-[var(--danger)]; }
+  .diff-engine-bar { @apply flex items-center justify-between gap-3 border-x border-b border-[var(--border)] bg-[var(--canvas-subtle)] px-2.5 py-1.5 text-[10px] text-[var(--fg-muted)]; }
+  .diff-engine-bar button { @apply shrink-0 cursor-pointer text-[var(--accent)] hover:underline; }
+  .diff-semantic-line.diff-add, .diff-semantic-line.diff-del { background: transparent; }
+  .diff-token-change { display: inline-block; max-width: 100%; vertical-align: top; line-height: inherit; color: inherit; }
+  .diff-add .diff-token-change { background: var(--diff-add-highlight); }
+  .diff-del .diff-token-change { background: var(--diff-delete-highlight); }
+  .diff .diff-split-row { grid-template-columns: var(--diff-gutter-width) minmax(0, 1fr) var(--diff-gutter-width) minmax(0, 1fr); }
+  .diff .diff-single-row { grid-template-columns: var(--diff-gutter-width) var(--diff-gutter-width) minmax(0, 1fr); }
+  .diff .diff-single-gutter { grid-template-columns: var(--diff-gutter-width) minmax(0, 1fr); }
+  .diff .diff-semantic-code { background: transparent; white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+  .diff .diff-semantic-code.diff-whole-line.diff-add { background: var(--diff-add); }
+  .diff .diff-semantic-code.diff-whole-line.diff-del { background: var(--diff-delete); }
+  .diff-split-row > .line-number:has(+ .diff-whole-line.diff-add),
+  .diff-single-row:has(> .diff-whole-line.diff-add) > .line-number { background: var(--diff-add); }
+  .diff-split-row > .line-number:has(+ .diff-whole-line.diff-del),
+  .diff-single-row:has(> .diff-whole-line.diff-del) > .line-number { background: var(--diff-delete); }
+  .diff .diff-whole-line .diff-token-change { background: transparent; }
+  .diff-split-row > code:first-of-type { border-right: 1px solid var(--border); }
+  .diff-no-changes { @apply px-3 py-4 text-[var(--fg-muted)]; }
+  .diff-with-explanations .diff-line { position: relative; }
+  .diff-explanation-anchor { position: absolute; right: 2px; top: 0; z-index: 2; }
+  .diff-explanation-bubble { @apply relative grid cursor-pointer place-items-center rounded-full bg-[var(--canvas)] text-[var(--explanation)] hover:bg-[var(--explanation-muted)] focus-visible:outline-2 focus-visible:outline-[var(--explanation)]; width: 17px; height: 17px; }
+  .diff-explanation-count { @apply absolute -right-0.5 -top-1 rounded bg-[var(--canvas)] px-0.5 text-[8px] leading-none; }
+  .diff-explained-range { box-shadow: inset 3px 0 0 var(--explanation); background: var(--explanation-muted); }
+  .diff-explanation-popup { @apply fixed rounded-lg border border-[var(--explanation)] bg-[var(--canvas)] p-3 text-[12px] leading-relaxed text-[var(--fg)] shadow-xl; z-index: 1000; width: min(360px, calc(100vw - 24px)); max-height: min(320px, calc(100vh - 24px)); overflow: auto; overflow-wrap: anywhere; }
+  .diff-explanation-text + .diff-explanation-text { @apply mt-3 border-t border-[var(--border-muted)] pt-3; }
+  .diff-explanation-location { @apply mb-1 text-[10px] font-semibold text-[var(--explanation)]; }
+  .diff-explanation-text p { white-space: pre-wrap; margin: 0; }
+  .diff-explanation-text a { color: var(--explanation); text-decoration: underline; }
   .diff-hunk { background: var(--diff-hunk); }
   .diff-hunk code { @apply text-[var(--accent)]; }
   .diff-meta { @apply bg-[var(--canvas-subtle)]; }
@@ -306,11 +354,9 @@
   .diff > .diff-segment:last-child > .diff-gap { border-bottom-width: 0; }
   .diff-gap + .diff-lines .diff-hunk { @apply border-t-0; }
   .diff-gap-toggle { @apply flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 px-3 py-1.5 text-[10px] font-semibold text-[var(--accent)] hover:brightness-110; }
-  .diff-control-gap { @apply justify-end; }
   .diff-global-actions { @apply ml-auto flex shrink-0 items-stretch; }
   .diff-global-actions button, .diff-global-actions a { @apply inline-flex cursor-pointer items-center justify-center gap-1.5 px-2.5 text-[10px] font-semibold text-[var(--accent)] no-underline hover:brightness-110 hover:no-underline; }
   .diff-global-actions button + button { @apply border-l border-[var(--border-muted)]; }
-  .diff-global-actions .github-file-action { @apply min-w-8 border-0; }
   .diff-target { background: var(--diff-target-highlight); box-shadow: inset 3px 0 0 var(--accent); }
   .diff-add.diff-target { background: var(--diff-add-highlight); }
   .diff-del.diff-target { background: var(--diff-delete-highlight); }
@@ -393,9 +439,7 @@
   .file-pills { @apply mt-2.5 grid gap-1.5; }
   .file-pills .file-link { @apply bg-[var(--canvas-inset)]; }
   .detail-diff { @apply shadow-[var(--shadow)]; }
-  .diff-compact { @apply max-h-[620px] text-[11px]; }
-  .diff-compact .diff-line { @apply grid-cols-[32px_32px_minmax(max-content,1fr)]; }
-  .diff-compact.diff-pure .diff-line { @apply grid-cols-[32px_minmax(max-content,1fr)]; }
+  .diff-compact { --diff-gutter-width: 32px; @apply max-h-[620px] text-[11px]; }
   .file-tab-content { @apply overflow-hidden p-0; }
   .tab-diff { @apply h-full; }
   .tab-diff .diff-shell { @apply h-full; }
@@ -450,6 +494,7 @@
   .setup-item { @apply flex min-h-6 items-start gap-3 text-sm leading-6; }
   .setup-item > svg { @apply mt-[3px] shrink-0; }
   .setup-ok > svg { @apply text-[var(--success)]; }
+  .setup-optional > svg { @apply text-[var(--fg-muted)]; }
   .setup-missing > svg { @apply text-[var(--danger)]; }
   .setup-item p { @apply mt-1 text-xs leading-5 text-[var(--fg-muted)]; }
   .setup-item code { @apply break-words text-[var(--fg)]; }
@@ -624,15 +669,15 @@
 .connected-file-header > .comment-anchor { flex: 1; min-width: 0; }
 .connected-file-header > .comment-anchor > .file-link { width: 100%; }
 .connected-file-list:has(.comment-anchor) { overflow: visible; }
-.connected-file-list > .comment-anchor:first-child > .file-link { border-top-left-radius: 5px; border-top-right-radius: 5px; }
-.connected-file-list > .comment-anchor:last-child > .file-link { border-bottom-left-radius: 5px; border-bottom-right-radius: 5px; }
+.connected-file-list > .comment-anchor:first-child .file-link { border-top-left-radius: 5px; border-top-right-radius: 5px; }
+.connected-file-list > .comment-anchor:last-child .file-link { border-bottom-left-radius: 5px; border-bottom-right-radius: 5px; }
 .comment-gutter { position: absolute; top: 0; bottom: 0; width: 30px; min-height: 26px; }
 .comment-bubbles { position: absolute; top: 2px; left: -27px; z-index: 12; display: flex; flex-direction: column; gap: 4px; opacity: 0; pointer-events: none; }
 .comment-anchor-centered > .comment-bubbles { top: 50%; transform: translateY(-50%); }
 .comment-bubbles.has-comments, .comment-bubbles.is-hovered { opacity: 1; pointer-events: auto; }
 .comment-bubbles::after { content: ""; position: absolute; inset: 0 -10px 0 0; z-index: -1; }
 .comment-bubble-wrap { position: relative; display: block; }
-.comment-bubble { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 4px; background: var(--canvas); color: var(--accent); cursor: pointer; }
+.comment-bubble { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 50%; background: var(--canvas); color: var(--accent); cursor: pointer; }
 .comment-bubble-filled svg { fill: var(--accent); color: var(--accent); }
 .comment-bubble:hover, .comment-bubble:focus-visible { background: var(--accent-muted); }
 .comment-hover { position: absolute; top: -6px; left: 32px; display: none; width: 360px; max-width: calc(100vw - 32px); max-height: 280px; overflow: auto; border: 1px solid var(--accent); border-radius: 6px; background: var(--canvas); color: var(--fg); box-shadow: 0 4px 16px #0002; font: 13px/1.6 var(--font-sans); white-space: pre-wrap; text-align: left; }

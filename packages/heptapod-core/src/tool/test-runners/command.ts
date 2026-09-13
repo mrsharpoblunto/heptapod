@@ -4,6 +4,7 @@ import { testCommand, type TestCommand, type TestRunnerAdapter } from "./types.j
 
 const DEPENDENCY_FILES = new Set([
   "package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock", "bun.lockb",
+  "pnpm-workspace.yaml", ".npmrc", ".yarnrc.yml",
   "Cargo.toml", "Cargo.lock", "go.mod", "go.sum",
 ]);
 
@@ -16,7 +17,7 @@ function packageHasTestScript(directory: string): boolean {
   }
 }
 
-function owningPackage(worktree: string, file: string): string {
+export function owningPackage(worktree: string, file: string): string {
   const root = resolve(worktree);
   let directory = dirname(resolve(root, file));
   while (directory === root || directory.startsWith(`${root}${sep}`)) {
@@ -25,6 +26,14 @@ function owningPackage(worktree: string, file: string): string {
     directory = dirname(directory);
   }
   return root;
+}
+
+export function nodeTargetCommand(worktree: string, template: string[], files: string[], cwd: string): TestCommand {
+  const packageFiles = files.map(file => relative(cwd, resolve(worktree, file)).split(sep).join("/"));
+  const argv = template.includes("{files}")
+    ? template.flatMap(part => part === "{files}" ? packageFiles : [part])
+    : [...template, ...((template[0] === "npm" || template[0] === "bun") && !template.includes("--") ? ["--"] : []), ...packageFiles];
+  return testCommand(argv, cwd);
 }
 
 function detectNodeCommand(worktree: string): { command: string[]; setup: TestCommand[] } | null {
@@ -76,6 +85,7 @@ export const commandRunner: TestRunnerAdapter = {
     return null;
   },
   dependenciesChanged: (paths) => paths.some((path) => DEPENDENCY_FILES.has(basename(path))),
+  requiresRebuild: (paths) => paths.length > 0,
   fullCommand(template) {
     const argv = template.filter((part) => part !== "{files}");
     if (argv.at(-1) === "--") argv.pop();
@@ -83,11 +93,7 @@ export const commandRunner: TestRunnerAdapter = {
   },
   target(worktree, template, file) {
     const cwd = owningPackage(worktree, file);
-    const packageFile = relative(cwd, resolve(worktree, file)).split(sep).join("/");
-    const argv = template.includes("{files}")
-      ? template.flatMap((part) => part === "{files}" ? [packageFile] : [part])
-      : [...template, ...(template[0] === "npm" || template[0] === "bun" ? ["--"] : []), packageFile];
-    return { file, command: testCommand(argv, cwd) };
+    return { file, command: nodeTargetCommand(worktree, template, [file], cwd) };
   },
   parseResult: () => ({ failures: [] }),
 };

@@ -8,11 +8,12 @@ import { ReviewCard, canOpenReview, type ReviewSummary } from "../src/web/Review
 import { ReviewIndex } from "../src/web/ReviewIndex.js";
 import { PendingReview } from "../src/web/PendingReview.js";
 import RootLayout from "../app/layout";
-import { buildDiffSegments, DiffView, newestFixtureRuns, parseDiff, resolveStepFile, reviewRailItems, ReviewViewer } from "../src/web/ReviewViewer.js";
+import { buildDiffSegments, DiffView, newestFixtureRuns, parseDiff, resolveStepFile, reviewRailItems, ReviewViewer, semanticDiffLines, semanticDiffSegments } from "../src/web/ReviewViewer.js";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => {} }), usePathname: () => "/reviews/42" }));
 vi.mock("../src/web/setup-checks", () => ({ startSetupChecks: () => ({
   repository: Promise.resolve({ connected: false, name: "Not connected" }),
+  difftastic: Promise.resolve({ installed: false }),
   github: Promise.resolve({ installed: false, authenticated: false }),
   skills: Promise.resolve(false), agents: Promise.resolve({ agents: [] }),
 }) }));
@@ -26,6 +27,19 @@ vi.mock("../src/web/GitHubIdentity", async (importOriginal) => ({
 const base = "1111111111111111111111111111111111111111";
 const head = "2222222222222222222222222222222222222222";
 
+test("file links have a separate accessible VS Code action only when a pinned target exists", () => {
+  const url = "vscode://file/tmp/review%20checkout/src/math.js";
+  const editorLinks = { "src/math.js": { url, revision: head, side: "head" as const } };
+  const render = (model: RenderModel) => renderToStaticMarkup(createElement(ReviewViewer, { data: model, updatedAt: "2026-09-13" }));
+  const markup = render({ ...data, editorLinks });
+  assert.match(markup, /<\/button><span class="file-link-actions"><a class="vscode-link" href="vscode:\/\/file\/tmp\/review%20checkout\/src\/math.js"/);
+  assert.match(markup, /aria-label="Open src\/math.js in VS Code \(review head 22222222\)"/);
+  assert.doesNotMatch(render(data), /vscode-link|vscode:\/\//);
+  assert.match(markup, /<\/a><a class="github-file-action" href="https:\/\/github.com\/example\/math\/blob\/2222222222222222222222222222222222222222\/src\/math.js"/);
+  assert.match(render(data), /aria-label="Open src\/math.js in GitHub"/);
+  assert.doesNotMatch(render({ ...data, source: { ...data.source, github: undefined } }), /github-file-action/);
+});
+
 test("rename widgets show only the moved message", () => {
   const markup = renderToStaticMarkup(createElement(DiffView, {
     filePath: "new name.ts", compact: true,
@@ -34,6 +48,36 @@ test("rename widgets show only the moved message", () => {
   }));
   assert.match(markup, />file moved</);
   assert.doesNotMatch(markup, /old name.ts|new name.ts|moved-file-title|diff --git|similarity index|rename from|diff-lines|line-number/);
+});
+
+test("structural diffs highlight novel tokens and retain original comment coordinates", () => {
+  const before = "const total = price + tax;\n", after = "const total = round(price + tax);\n";
+  const semanticDiff = { status: "ready" as const, language: "TypeScript", unchanged: false,
+    alignment: [[1,1]] as Array<[number,number]>, before: { 1: [] }, after: { 1: [{ start: 14, end: 20 }, { start: 31, end: 32 }] } };
+  const lines = semanticDiffLines(semanticDiff, before, after);
+  assert.deepEqual(lines.map(({ old, next }) => [old, next]), [[1,1]]);
+  const markup = renderToStaticMarkup(createElement(DiffView, {filePath: "total.ts", patch: "@@ -1 +1 @@\n-const total = price + tax;\n+const total = round(price + tax);\n", beforeContent: before, afterContent: after, semanticDiff }));
+  assert.match(markup, /Difftastic · TypeScript/);
+  assert.equal((markup.match(/<mark class="diff-token-change">/g) ?? []).length, 2);
+  assert.match(markup, /Show standard diff/);
+  assert.doesNotMatch(markup, /class="diff-gap"|diff-control-gap|github-file-action/);
+  const unchanged = Array.from({ length: 15 }, (_, index) => ({ type: "context" as const, content: " x", old: index + 1, next: index + 1, key: index, changes: index === 7 ? [{ start: 0, end: 1 }] : [] }));
+  const segments = semanticDiffSegments(unchanged);
+  assert.deepEqual(segments.map((segment) => segment.kind), ["gap", "lines", "gap"]);
+  assert.equal(segments[0].kind === "gap" && segments[0].gap.oldStart, 1);
+  assert.equal(segments[2].kind === "gap" && segments[2].gap.newEnd, 15);
+});
+
+test("fallback, syntax-unchanged, and edited renames remain readable", () => {
+  const props = { filePath: "new.ts", patch: "diff --git a/old.ts b/new.ts\nrename from old.ts\nrename to new.ts\n@@ -1 +1 @@\n-old\n+new\n", beforeContent: "old\n", afterContent: "new\n" };
+  const markup = renderToStaticMarkup(createElement(DiffView, { ...props, semanticDiff: { status: "fallback", reason: "Difftastic timed out" } }));
+  assert.match(markup, /Difftastic timed out/);
+  assert.match(markup, /diff-add/);
+  assert.doesNotMatch(markup, /moved-file-content|diff-token-change/);
+  const formatting = renderToStaticMarkup(createElement(DiffView, { ...props, semanticDiff: { status: "ready", language: "TypeScript", unchanged: true, alignment: [], before: {}, after: {} } }));
+  assert.match(formatting, /No syntactic changes/);
+  const step = { ...data.steps[0], fileDiffs: [{ ...props, path: "new.ts", semanticDiff: { status: "fallback" as const, reason: "test" } }] };
+  assert.equal(resolveStepFile([step, { ...step, fileDiffs: [], referenceFiles: [] }], 1, "new.ts")?.semanticDiff, undefined);
 });
 
 test("supporting files and test cases use moved indicators instead of additions", () => {
@@ -228,13 +272,18 @@ test("builds expandable context gaps around minimal diff hunks", () => {
 test("refactor comments target explanation, source, and callsites without wrapping before/after examples", () => {
   const model: RenderModel = { ...data, steps: [{ ...data.steps[0], kind: "refactor", body: "", testRun: undefined, interfaces: [{
     name: "Portal bitmap scale", description: "Explain the backing resolution.", file: "src/math.js",
-    before: "Before with [math](heptapod-file:src%2Fmath.js).", after: "After the refactor.",
+    before: "Before with [math](heptapod-file:src%2Fmath.js).\n\n```js\nconst scale = bitmapScale(2);\n```",
+    after: "Pass the scale as a named option.\n\n```js\nconst scale = bitmapScale({ pixelRatio: 2 });\n```",
     callsites: [{ file: "src/app.js", label: "Caller" }],
   }] }] };
   const markup = renderToStaticMarkup(createElement(ReviewViewer, { data: model, reviewId: "42", updatedAt: "2026-09-12" }));
   const beforeAfter = markup.slice(markup.indexOf('class="before-after"'), markup.indexOf('class="refactor-file-group"'));
   assert.doesNotMatch(beforeAfter, /comment-anchor|Add review comment/);
   assert.match(beforeAfter, /file-link-inline/);
+  assert.equal(beforeAfter.match(/<pre class="code-block" data-language="js">/g)?.length, 2);
+  assert.equal(beforeAfter.match(/<span class="hljs-keyword">const<\/span>/g)?.length, 2);
+  assert.match(beforeAfter, /<p>Pass the scale as a named option\.<\/p>/);
+  assert.doesNotMatch(beforeAfter, /```/);
   const refactor = markup.slice(markup.indexOf('class="refactor-sections"'), markup.indexOf('class="step-pager"'));
   assert.equal(refactor.match(/Add review comment/g)?.length, 3);
   assert.match(refactor, /class="refactor-section"><div class="interface-change"><h3>/);
@@ -316,7 +365,7 @@ test("renders imported reviews and linked pull-request metadata on the index", (
     deletions: 0,
   }] }));
   assert.match(markup, /<h1[^>]*>HEPTAPOD<\/h1>/);
-  assert.match(markup, /Imported reviews/);
+  assert.match(markup, /Awaiting review/);
   assert.doesNotMatch(markup, /heptapod capture --pr/);
   assert.doesNotMatch(markup, /<canvas/);
   assert.match(markup, /progress-spinner/);

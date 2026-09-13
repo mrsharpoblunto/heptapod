@@ -11,6 +11,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: () => {}, refre
 
 const readyChecks = (): SetupPromises => ({
   repository: Promise.resolve({ connected: true, name: "example/repo", githubUrl: "https://github.com/example/repo" }),
+  difftastic: Promise.resolve({ installed: false }),
   github: Promise.resolve({ installed: true, authenticated: true }),
   skills: Promise.resolve(true),
   agents: Promise.resolve({ agents: [{ id: "codex", name: "Codex", installed: true, authenticated: true, skillInstalled: true, loginCommand: "codex login", installUrl: "https://example.com" }] }),
@@ -69,4 +70,27 @@ test("reports a problem in the header when a completed check fails", async () =>
   assert.doesNotMatch(html, /Status OK/);
   assert.match(html, /heptapod-skill install/);
   assert.match(html, /aria-expanded="false"/);
+});
+
+test("Difftastic is optional and reports host availability with installation guidance", async () => {
+  for (const difftastic of [{ installed: false }, { installed: true, version: "Difftastic 0.70.0" }]) {
+    const output = new PassThrough(); let html = "";
+    output.on("data", (chunk) => { html += chunk.toString(); });
+    const ended = new Promise<void>((resolve, reject) => { output.on("end", resolve); output.on("error", reject); });
+    const stream = renderToPipeableStream(createElement(SetupProvider, {
+      promises: { ...readyChecks(), difftastic: Promise.resolve(difftastic) }, children: createElement(SetupChecklist),
+    }), { onAllReady: () => stream.pipe(output), onError: (error) => { output.destroy(error as Error); } });
+    await ended;
+    assert.match(html, /Status OK/);
+    assert.match(html, /Difftastic \(optional\)/);
+    if (difftastic.installed) {
+      assert.match(html, /Difftastic 0\.70\.0/);
+      assert.doesNotMatch(html, /brew install difftastic/);
+    } else {
+      assert.match(html, /Reviews use standard diffs/);
+      assert.match(html, /setup-optional/);
+      assert.match(html, /brew install difftastic/);
+      assert.match(html, /difft --version/);
+    }
+  }
 });

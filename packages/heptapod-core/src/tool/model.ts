@@ -64,6 +64,8 @@ export function buildReviewModel(
     const fileDiffs = patch ? splitPatchFiles(patch).map((file) => ({
       ...file,
       ...filesByStep.get(step.id)?.get(file.path),
+      ...(step.explanations?.some((note) => note.file === file.path)
+        ? { explanations: step.explanations.filter((note) => note.file === file.path) } : {}),
     })) : [];
     const changedPaths = new Set(fileDiffs.map((file) => file.path));
     const knownPaths = new Set([...changedPaths, ...referenceSnapshots.keys()]);

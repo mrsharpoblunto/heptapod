@@ -4,14 +4,14 @@ import { agentDefinitions } from "./agent-definitions";
 
 import { AgentIcon } from "./AgentIcon";
 import { Suspense, use, useId, useRef, useState, type ReactNode } from "react";
-import { Check, LoaderCircle, X } from "lucide-react";
+import { Check, LoaderCircle, Minus, X } from "lucide-react";
 import type { ConnectedRepository } from "./connected-repository";
 import type { GitHubStatus } from "./setup";
 import { useSetupPromises, type SetupPromises } from "./SetupContext";
 
-function Item({ ok, children }: { ok?: boolean; children: ReactNode }) {
-  return <li className={`setup-item ${ok === undefined ? "setup-checking" : ok ? "setup-ok" : "setup-missing"}`} aria-busy={ok === undefined || undefined}>
-    {ok === undefined ? <LoaderCircle size={18} className="progress-spinner" aria-label="Checking" /> : ok ? <Check size={18} aria-label="Passed" /> : <X size={18} aria-label="Not ready" />}<div>{children}</div>
+function Item({ ok, optional, children }: { ok?: boolean; optional?: boolean; children: ReactNode }) {
+  return <li className={`setup-item ${ok === undefined ? "setup-checking" : ok ? "setup-ok" : optional ? "setup-optional" : "setup-missing"}`} aria-busy={ok === undefined || undefined}>
+    {ok === undefined ? <LoaderCircle size={18} className="progress-spinner" aria-label="Checking" /> : ok ? <Check size={18} aria-label="Passed" /> : optional ? <Minus size={18} aria-label="Optional" /> : <X size={18} aria-label="Not ready" />}<div>{children}</div>
   </li>;
 }
 export function CheckingItem({ label }: { label: string }) {
@@ -45,12 +45,19 @@ function AgentsCheck({ promise }: { promise: SetupPromises["agents"] }) {
     {!ready.length && <p>Install and authenticate an agent to prepare reviews from the open PR list.</p>}
   </Item>;
 }
-function ChecklistItems({ promises: { repository, github, skills, agents } }: { promises: SetupPromises }) {
+function DifftasticCheck({ promise }: { promise: SetupPromises["difftastic"] }) {
+  const status = use(promise);
+  return <Item ok={status.installed} optional><strong>Difftastic (optional):</strong> <span>{status.installed ? status.version ?? "Installed" : "Not available"}</span>
+    {status.installed ? <p>Available for structural diffs during review ingestion.</p> : <p>Reviews use standard diffs. <a href="https://difftastic.wilfred.me.uk/installation.html" target="_blank" rel="noreferrer">Install Difftastic</a> on this host to enable structural diffs, then verify with <code>difft --version</code>. On macOS: <code>brew install difftastic</code>.</p>}
+  </Item>;
+}
+function ChecklistItems({ promises: { repository, github, skills, agents, difftastic } }: { promises: SetupPromises }) {
   return <ul className="setup-checklist">
     <Suspense fallback={<CheckingItem label="Git repository" />}><RepositoryCheck promise={repository} /></Suspense>
     <Suspense fallback={<CheckingItem label="GitHub CLI" />}><GitHubCheck promise={github} /></Suspense>
     <Suspense fallback={<CheckingItem label="Agent skills" />}><SkillsCheck promise={skills} /></Suspense>
     <Suspense fallback={<CheckingItem label="Agents" />}><AgentsCheck promise={agents} /></Suspense>
+    <Suspense fallback={<CheckingItem label="Difftastic" />}><DifftasticCheck promise={difftastic} /></Suspense>
   </ul>;
 }
 function CompletedStatus({ promises }: { promises: SetupPromises }) {

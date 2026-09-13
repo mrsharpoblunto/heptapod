@@ -5,7 +5,10 @@ import type { AgentStatus } from "@thestraylight/heptapod-core/agents";
 import type { ConnectedRepository } from "./connected-repository";
 import type { GitHubStatus } from "./setup";
 
+import type { DifftasticStatus } from "@thestraylight/heptapod-core/difftastic";
+
 export interface SetupPromises {
+  difftastic: Promise<DifftasticStatus>;
   repository: Promise<ConnectedRepository>;
   github: Promise<GitHubStatus>;
   skills: Promise<boolean>;
