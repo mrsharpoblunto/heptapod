@@ -629,7 +629,7 @@
 .comment-gutter { position: absolute; top: 0; bottom: 0; width: 30px; min-height: 26px; }
 .comment-bubbles { position: absolute; top: 2px; left: -27px; z-index: 12; display: flex; flex-direction: column; gap: 4px; opacity: 0; pointer-events: none; }
 .comment-anchor-centered > .comment-bubbles { top: 50%; transform: translateY(-50%); }
-.comment-bubbles.has-comments, .comment-anchor.comment-hovered > .comment-bubbles { opacity: 1; pointer-events: auto; }
+.comment-bubbles.has-comments, .comment-bubbles.is-hovered { opacity: 1; pointer-events: auto; }
 .comment-bubbles::after { content: ""; position: absolute; inset: 0 -10px 0 0; z-index: -1; }
 .comment-bubble-wrap { position: relative; display: block; }
 .comment-bubble { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 4px; background: var(--canvas); color: var(--accent); cursor: pointer; }

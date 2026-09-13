@@ -1,9 +1,10 @@
 "use client";
 
-import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Check, ExternalLink, GripHorizontal, MessageSquare, Send, X } from "lucide-react";
 import type { RenderModel, RenderStep, ReviewComment, ReviewCommentTarget, ReviewDraft, ReviewDraftPreview } from "@thestraylight/heptapod-core/types";
 import { useToast, ToastMessage } from "./Toasts";
+import { createCommentHover } from "./comment-hover";
 import { GitHubIcon, useCachedGitHubPullRequestMetadata } from "./GitHubIdentity";
 
 interface DraftState { draft: ReviewDraft; preview: ReviewDraftPreview }
@@ -16,9 +17,8 @@ interface ReviewCommentsContext {
   saving: boolean;
   locked: boolean;
   error: string | null;
-  temporaryAnchor: string | null;
-  showTemporaryAnchor: (id: string | null) => void;
-  leaveTemporaryAnchor: (id: string) => void;
+  hover: ReturnType<typeof createCommentHover>;
+  pinnedAnchor: string | null;
   open: (target: ReviewCommentTarget, comment?: ReviewComment, rect?: AnchorRect, anchorId?: string) => void;
   beginCodeComment: (target: Extract<ReviewCommentTarget, { kind: "line" }>) => void;
   updateCodeComment: (id: string, body: string) => void;
@@ -42,8 +42,7 @@ export function ReviewCommentsProvider({ model, reviewId, step, children, render
   const [error, setError] = useState<string | null>(null);
   const notify = useToast();
   const [editor, setEditor] = useState<CommentEditor | null>(null);
-  const [temporaryAnchor, setTemporaryAnchor] = useState<string | null>(null);
-  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [hover] = useState(createCommentHover);
   const [focusedComment, setFocusedComment] = useState<{ id: string; sequence: number } | null>(null);
   const current = useRef<DraftState | null>(null);
   const version = useRef(0);
@@ -57,26 +56,15 @@ export function ReviewCommentsProvider({ model, reviewId, step, children, render
   const enabled = Boolean(!disabled && model.source.github && (githubMetadata?.state === "open" || githubMetadata?.state === "draft"));
   const locked = Boolean(updating || state?.draft.githubReviewId || state?.draft.publishedAt || state?.draft.publishing);
 
-  const showTemporaryAnchor = (id: string | null) => {
-    if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    setTemporaryAnchor(id);
-  };
-  const leaveTemporaryAnchor = (id: string) => {
-    if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    hoverTimer.current = setTimeout(() => setTemporaryAnchor((current) => current === id ? null : current), 400);
-  };
   useEffect(() => {
-    const dismiss = () => {
-      if (hoverTimer.current) clearTimeout(hoverTimer.current);
-      setTemporaryAnchor(null);
-    };
-    dismiss();
-    window.addEventListener("scroll", dismiss, true);
+    hover.clear();
+    if (!enabled) return;
+    window.addEventListener("scroll", hover.clear, true);
     return () => {
-      window.removeEventListener("scroll", dismiss, true);
-      if (hoverTimer.current) clearTimeout(hoverTimer.current);
+      window.removeEventListener("scroll", hover.clear, true);
+      hover.clear();
     };
-  }, [step.id]);
+  }, [enabled, hover, step.id]);
 
   useEffect(() => {
     // Drafts are unavailable during ingestion; resume loading when the update finishes.
@@ -232,9 +220,9 @@ export function ReviewCommentsProvider({ model, reviewId, step, children, render
     setEditor({ id: comment?.id ?? crypto.randomUUID(), target, body: comment?.body ?? "", anchorId, position: { x, y: Math.max(16, Math.min(y, window.innerHeight - height - 16)) } });
   };
 
-  const pinnedAnchor = editor && !state?.draft.comments.some((comment) => comment.id === editor.id && comment.body.trim()) ? editor.anchorId : null;
+  const pinnedAnchor = editor && !state?.draft.comments.some((comment) => comment.id === editor.id && comment.body.trim()) ? editor.anchorId ?? null : null;
   if (!enabled) return children;
-  return <CommentsContext.Provider value={{ model, step, state, saving, locked, error, temporaryAnchor: pinnedAnchor ?? temporaryAnchor, showTemporaryAnchor, leaveTemporaryAnchor, open, beginCodeComment,
+  return <CommentsContext.Provider value={{ model, step, state, saving, locked, error, hover, pinnedAnchor, open, beginCodeComment,
     updateCodeComment,
     removeCodeComment: (id) => editCodeComments((comments) => comments.filter((comment) => comment.id !== id)),
     updateSummary: (summary) => {
@@ -312,7 +300,6 @@ export function CommentAnchor({ target, children, inline = false, centered = fal
   const instanceId = useId();
   const anchor = useRef<HTMLDivElement & HTMLSpanElement>(null);
   const [gutter, setGutter] = useState(-27);
-  const [dismissedPreview, setDismissedPreview] = useState<string | null>(null);
   useEffect(() => {
     const element = anchor.current;
     if (!element) return;
@@ -331,17 +318,31 @@ export function CommentAnchor({ target, children, inline = false, centered = fal
   const saved = context.state?.draft.comments.filter((comment) => comment.target.stepId === target.stepId && comment.target.anchor === target.anchor) ?? [];
   const hasComments = saved.some((comment) => comment.body.trim());
   const Tag = inline ? "span" : "div";
-  return <Tag ref={anchor} className={`comment-anchor${inline ? " comment-anchor-inline" : ""}${centered ? " comment-anchor-centered" : ""}${context.temporaryAnchor === instanceId ? " comment-hovered" : ""}`}
+  return <Tag ref={anchor} className={`comment-anchor${inline ? " comment-anchor-inline" : ""}${centered ? " comment-anchor-centered" : ""}`}
     onPointerMove={(event) => {
       event.stopPropagation();
       // Scrolling beneath a stationary pointer must not reveal another temporary icon.
-      if (event.movementX || event.movementY) context.showTemporaryAnchor(hasComments ? null : instanceId);
+      if (event.movementX || event.movementY) context.hover.show(hasComments ? null : instanceId);
     }}
-    onFocus={(event) => { event.stopPropagation(); context.showTemporaryAnchor(hasComments ? null : instanceId); }}
-    onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) context.leaveTemporaryAnchor(instanceId); }}
-    onMouseLeave={() => context.leaveTemporaryAnchor(instanceId)}>
+    onFocus={(event) => { event.stopPropagation(); context.hover.show(hasComments ? null : instanceId); }}
+    onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) context.hover.leave(instanceId); }}
+    onMouseLeave={() => context.hover.leave(instanceId)}>
     <span className="comment-gutter" aria-hidden="true" style={{ left: gutter - 3 }} />
-    <span className={`comment-bubbles${hasComments ? " has-comments" : ""}`} style={{ left: gutter }}>{(saved.length ? saved : [null]).map((comment) => <span className="comment-bubble-wrap" key={comment?.id ?? "new"} onMouseLeave={() => setDismissedPreview(null)}>
+    <CommentBubbles context={context} target={target} saved={saved} instanceId={instanceId} gutter={gutter} />
+    {children}
+  </Tag>;
+}
+
+function CommentBubbles({ context, target, saved, instanceId, gutter }: {
+  context: ReviewCommentsContext; target: ReviewCommentTarget; saved: ReviewComment[]; instanceId: string; gutter: number;
+}) {
+  const subscribe = useCallback((listener: () => void) => context.hover.subscribe(instanceId, listener), [context.hover, instanceId]);
+  const hovered = useSyncExternalStore(subscribe,
+    () => context.pinnedAnchor !== null ? context.pinnedAnchor === instanceId : context.hover.isActive(instanceId),
+    () => false);
+  const [dismissedPreview, setDismissedPreview] = useState<string | null>(null);
+  const hasComments = saved.some((comment) => comment.body.trim());
+  return <span className={`comment-bubbles${hasComments ? " has-comments" : ""}${hovered ? " is-hovered" : ""}`} style={{ left: gutter }}>{(saved.length ? saved : [null]).map((comment) => <span className="comment-bubble-wrap" key={comment?.id ?? "new"} onMouseLeave={() => setDismissedPreview(null)}>
       <button className={`comment-bubble${comment?.body.trim() ? " comment-bubble-filled" : ""}`} aria-label={comment ? "Edit review comment" : "Add review comment"}
         disabled={!context.state || context.locked} onClick={(event) => { event.stopPropagation(); context.open(comment?.target ?? target, comment ?? undefined, event.currentTarget.getBoundingClientRect(), instanceId); }}><MessageSquare size={15} /></button>
       {comment?.body && dismissedPreview !== comment.id && <span className="comment-hover" role="tooltip">
@@ -350,8 +351,7 @@ export function CommentAnchor({ target, children, inline = false, centered = fal
           <button aria-label="Remove comment" disabled={context.locked} onClick={(event) => { event.stopPropagation(); context.removeCodeComment(comment.id); }}><X size={14} /></button>
         </span><span className="compact-comment-text" onClick={(event) => { event.stopPropagation(); context.open(comment.target, comment, event.currentTarget.closest(".comment-bubble-wrap")?.getBoundingClientRect(), instanceId); }}>{comment.body}</span>
       </span>}
-    </span>)}</span>{children}
-  </Tag>;
+    </span>)}</span>;
 }
 
 export function AnnotatedMarkdown({ anchor, section, children }: { anchor: string; section?: string; children: ReactNode }) {
