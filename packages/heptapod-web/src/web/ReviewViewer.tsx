@@ -26,6 +26,7 @@ import {
   memo,
   Fragment,
   useEffect,
+  useLayoutEffect,
   useContext,
   useMemo,
   useRef,
@@ -814,6 +815,31 @@ function DescriptionStep({ step, onSelectFile }: StepViewProps): ReactNode {
   </>;
 }
 
+function useCollapsibleFiles() {
+  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(() => new Set());
+  const scrollPosition = useRef<{ container: HTMLElement; file: HTMLElement; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const position = scrollPosition.current;
+    if (!position) return;
+    scrollPosition.current = null;
+    position.container.scrollTop += position.file.getBoundingClientRect().top - position.top;
+  }, [collapsedFiles]);
+  const toggleFile = (path: string, button: HTMLButtonElement) => {
+    const header = button.closest<HTMLElement>(".connected-file-header");
+    const container = button.closest<HTMLElement>(".step-content");
+    if (header?.parentElement && container) {
+      scrollPosition.current = { container, file: header.parentElement, top: Math.max(header.getBoundingClientRect().top, container.getBoundingClientRect().top) };
+    }
+    setCollapsedFiles((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+  return { collapsedFiles, toggleFile };
+}
+
 function TestsStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNode {
   const areas = (step.testAreas ?? []).map((area) => ({
     ...area,
@@ -824,7 +850,7 @@ function TestsStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNo
       return { ...file, cases: file.cases.map((testCase) => ({ ...testCase, change: "moved" as const })) };
     }),
   }));
-  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(() => new Set());
+  const { collapsedFiles, toggleFile } = useCollapsibleFiles();
   return <>
     {step.body && <Markdown source={step.body} files={allStepFiles(step)} onSelectFile={onSelectFile} />}
     <div className="test-areas">
@@ -840,12 +866,7 @@ function TestsStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNo
               aria-expanded={!collapsedFiles.has(file.path)}
               aria-label={collapsedFiles.has(file.path) ? `Expand ${file.path} test cases` : `Collapse ${file.path} test cases`}
               className={classNames("inline-diff-toggle", collapsedFiles.has(file.path) && "collapsed")}
-              onClick={() => setCollapsedFiles((current) => {
-                const next = new Set(current);
-                if (next.has(file.path)) next.delete(file.path);
-                else next.add(file.path);
-                return next;
-              })}
+              onClick={(event) => toggleFile(file.path, event.currentTarget)}
               title={collapsedFiles.has(file.path) ? "Expand test cases" : "Collapse test cases"}
             >{collapsedFiles.has(file.path)
               ? <ChevronDown aria-hidden="true" size={15} />
@@ -962,7 +983,7 @@ function ImplementationStep({
   onSelectFile,
   source,
 }: StepViewProps & { source: RenderModel["source"] }): ReactNode {
-  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(() => new Set());
+  const { collapsedFiles, toggleFile } = useCollapsibleFiles();
   const filesByPath = new Map(step.fileDiffs.map((file) => [file.path, file]));
   return <>
     {step.body && <Markdown source={step.body} files={allStepFiles(step)} onSelectFile={onSelectFile} />}
@@ -985,12 +1006,7 @@ function ImplementationStep({
                   aria-expanded={!collapsedFiles.has(file.path)}
                   aria-label={collapsedFiles.has(file.path) ? `Expand ${file.path} diff` : `Collapse ${file.path} diff`}
                   className={classNames("inline-diff-toggle", collapsedFiles.has(file.path) && "collapsed")}
-                  onClick={() => setCollapsedFiles((current) => {
-                    const next = new Set(current);
-                    if (next.has(file.path)) next.delete(file.path);
-                    else next.add(file.path);
-                    return next;
-                  })}
+                  onClick={(event) => toggleFile(file.path, event.currentTarget)}
                   title={collapsedFiles.has(file.path) ? "Expand inline diff" : "Collapse inline diff"}
                 >{collapsedFiles.has(file.path)
                   ? <ChevronDown aria-hidden="true" size={15} />

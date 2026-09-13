@@ -7,13 +7,14 @@ export interface CommentEditor {
 export interface ReviewCommentSnapshot {
   state: DraftState | null;
   saving: boolean;
+  publishing: boolean;
   error: string | null;
   editor: CommentEditor | null;
   focusedComment: { id: string; sequence: number } | null;
 }
 
 export function createReviewCommentStore() {
-  const initial: ReviewCommentSnapshot = { state: null, saving: false, error: null, editor: null, focusedComment: null };
+  const initial: ReviewCommentSnapshot = { state: null, saving: false, publishing: false, error: null, editor: null, focusedComment: null };
   let snapshot = initial;
   const listeners = new Set<() => void>();
   return {

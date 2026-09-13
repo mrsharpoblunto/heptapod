@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { Check, ExternalLink, GripHorizontal, MessageSquare, Send, X } from "lucide-react";
+import { Check, ExternalLink, GripHorizontal, LoaderCircle, MessageSquare, Send, X } from "lucide-react";
 import type { RenderModel, RenderStep, ReviewComment, ReviewCommentTarget } from "@thestraylight/heptapod-core/types";
 import { useToast, ToastMessage } from "./Toasts";
 import { createReviewCommentStore, createReviewSelection, sameItems, type ReviewCommentSnapshot, type DraftState, type CommentEditor } from "./review-comment-store";
@@ -53,13 +53,13 @@ function pinnedAnchor(snapshot: ReviewCommentSnapshot) {
 }
 export function useReviewLocked() {
   const context = useReviewActions();
-  const locked = useReviewSelection((snapshot) => draftLocked(snapshot.state), Object.is);
+  const locked = useReviewSelection((snapshot) => snapshot.publishing || draftLocked(snapshot.state), Object.is);
   return Boolean(context?.updating || locked);
 }
 export function useReviewComments() {
   const context = useReviewActions();
   const snapshot = useReviewSelection((snapshot) => snapshot, Object.is);
-  return context ? { ...context, ...snapshot, locked: context.updating || draftLocked(snapshot.state), pinnedAnchor: pinnedAnchor(snapshot) } : null;
+  return context ? { ...context, ...snapshot, locked: context.updating || snapshot.publishing || draftLocked(snapshot.state), pinnedAnchor: pinnedAnchor(snapshot) } : null;
 }
 
 
@@ -81,11 +81,10 @@ export function ReviewCommentsProvider({ model, reviewId, step, children, render
   const persistedRevision = useRef(0);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const autosave = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const busy = useRef(false);
   const endpoint = `/api/service/reviews/${encodeURIComponent(reviewId)}/draft`;
   const githubMetadata = useCachedGitHubPullRequestMetadata(reviewId);
   const enabled = Boolean(!disabled && model.source.github && (githubMetadata?.state === "open" || githubMetadata?.state === "draft"));
-  const isLocked = () => updating || draftLocked(current.current);
+  const isLocked = () => updating || store.getSnapshot().publishing || draftLocked(current.current);
 
   useEffect(() => {
     hover.clear();
@@ -205,13 +204,8 @@ export function ReviewCommentsProvider({ model, reviewId, step, children, render
 
   const publish = async () => {
     const state = current.current;
-    if (!state || busy.current || revision.current > persistedRevision.current) return;
-    // Open during the click so the browser does not block the eventual GitHub tab.
-    const tab = window.open("about:blank", "_blank");
-    if (tab) tab.opener = null;
-    busy.current = true;
-    setSaving(true);
-    setError(null);
+    if (!state || store.getSnapshot().publishing || revision.current > persistedRevision.current) return;
+    store.update({ publishing: true, error: null });
     try {
       const response = await fetch(`${endpoint}/publish`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: state.draft.version }) });
       const accepted = await response.json();
@@ -225,14 +219,12 @@ export function ReviewCommentsProvider({ model, reviewId, step, children, render
         await new Promise((resolve) => window.setTimeout(resolve, 1_000));
       }
       current.current = result; setState(result);
-      if (tab && result.draft.githubUrl) tab.location.href = result.draft.githubUrl;
     } catch (error) {
-      tab?.close();
       reportError(error instanceof Error ? error.message : String(error));
       // A partially published draft remains recoverable on the next attempt.
       const response = await fetch(endpoint).catch(() => null);
       if (response?.ok) { const refreshed = await response.json(); current.current = refreshed; setState(refreshed); }
-    } finally { busy.current = false; setSaving(false); }
+    } finally { store.update({ publishing: false }); }
   };
 
   const open = (target: ReviewCommentTarget, comment?: ReviewComment, rect?: AnchorRect, anchorId?: string) => {
@@ -476,6 +468,7 @@ export function CodeCommentBlock({ commentId, autofocus = true }: { commentId: s
 export function FinalReview({ renderThread }: { renderThread: (comment: ReviewComment) => ReactNode }) {
   const context = useReviewComments()!;
   const state = context.state;
+  const publishing = context.publishing || Boolean(state?.draft.publishing);
   const summary = state?.draft.summaryIsCombined ? state.draft.summary : state?.preview.body ?? "";
   const headerStart = useRef<HTMLDivElement>(null);
   const [headerStuck, setHeaderStuck] = useState(false);
@@ -492,9 +485,13 @@ export function FinalReview({ renderThread }: { renderThread: (comment: ReviewCo
   }, [loaded]);
   if (!state) return <div className="draft-review"><header className="draft-review-header"><h1><GitHubIcon size={30} />GitHub review</h1></header><p>{context.error ? "Unable to load your draft." : "Loading your draft…"}</p></div>;
   return <div className="draft-review"><div ref={headerStart} aria-hidden="true" /><header className={`draft-review-header${headerStuck ? " is-sticky" : ""}`}><h1><GitHubIcon size={30} />GitHub review</h1>
-    <div className="draft-review-actions">
+    <div className="draft-review-actions" aria-live="polite">
+      {state.draft.publishedAt && <span role="status">Draft comments published.</span>}
       {state.draft.githubUrl && <a href={state.draft.githubUrl} target="_blank" rel="noreferrer">Open GitHub review <ExternalLink size={14} /></a>}
-      {!state.draft.publishedAt && <button className="draft-primary" disabled={context.saving || state.draft.publishing || Boolean(state.preview.errors.length) || (!summary.trim() && !state.preview.threads.length)} onClick={() => { void context.publish(); }}><Send size={15} />{context.saving ? "Saving…" : "Publish draft comments"}</button>}
+      {!state.draft.publishedAt && <button className="draft-primary" aria-busy={publishing} disabled={context.saving || publishing || Boolean(state.preview.errors.length) || (!summary.trim() && !state.preview.threads.length)} onClick={() => { void context.publish(); }}>
+        {publishing ? <LoaderCircle className="progress-spinner" size={15} aria-hidden="true" /> : <Send size={15} aria-hidden="true" />}
+        {publishing ? "Publishing…" : context.saving ? "Saving…" : "Publish draft comments"}
+      </button>}
     </div>
     </header>
     <DraftInput className="draft-summary-input" label="Review summary" placeholder="Write your review summary…" getValue={context.getSummary} subscribe={context.store.subscribe}
