@@ -60,7 +60,18 @@ export function SyntaxCode({ content, changes = [], syntax, language }: {
   });
   let cursor = 0;
   const parts: ReactNode[] = [];
-  for (const range of changes) {
+  // Difftastic leaves whitespace between novel tokens out of its ranges. Join
+  // those tokens into one highlight without covering unchanged code between edits.
+  const highlights = changes.reduce<SemanticRange[]>((merged, range) => {
+    const previous = merged.at(-1);
+    if (previous && /^\s*$/.test(content.slice(previous.end, range.start))) {
+      previous.end = Math.max(previous.end, range.end);
+    } else {
+      merged.push({ ...range });
+    }
+    return merged;
+  }, []);
+  for (const range of highlights) {
     if (range.start > cursor) parts.push(<Fragment key={`plain-${cursor}`}>{slice(cursor, range.start)}</Fragment>);
     parts.push(<mark className="diff-token-change" key={`change-${range.start}`}>{slice(range.start, range.end)}</mark>);
     cursor = range.end;
