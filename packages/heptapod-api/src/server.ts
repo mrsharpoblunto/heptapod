@@ -5,7 +5,7 @@ import { fork, type ChildProcess } from "node:child_process";
 import { cancelProcess } from "./cancel-process.js";
 import type { AgentId } from "@thestraylight/heptapod-core/agents";
 import { parsePullRequestNumber } from "@thestraylight/heptapod-core/review-source";
-import { beginReviewPreparation, beginReviewUpdate, deleteReview, failReviewIngestion, getReview, listReviews, saveReviewDraft } from "@thestraylight/heptapod-core/database";
+import { beginReviewPreparation, beginReviewUpdate, deleteReview, failReviewIngestion, getManualTestState, getReview, listReviews, saveReviewDraft, setManualTestResult } from "@thestraylight/heptapod-core/database";
 import { removeReviewRun, resolveReviewRunDirectory, validateReviewId } from "@thestraylight/heptapod-core/cache";
 import { loadDraftState } from "@thestraylight/heptapod-core/review-draft-service";
 import type { ReviewComment } from "@thestraylight/heptapod-core/types";
@@ -103,6 +103,18 @@ export function createApiServer({ root, webOrigin }: { root: string; webOrigin: 
         } catch (error) { failReviewIngestion(id, error instanceof Error ? error.message : String(error)); throw error; }
       }
       const draftPath = url.pathname.match(/^\/reviews\/([^/]+)\/draft(\/publish)?$/);
+      const manualTestsPath = url.pathname.match(/^\/reviews\/([^/]+)\/manual-tests$/);
+      if (manualTestsPath) {
+        const id = decodeURIComponent(manualTestsPath[1]);
+        if (request.method === "GET") { send(200, getManualTestState(id)); return; }
+        if (request.method === "PUT") {
+          const body = await jsonBody(request);
+          if (typeof body.head !== "string" || typeof body.checkId !== "string" || typeof body.tested !== "boolean") {
+            throw new Error("Invalid manual test result.");
+          }
+          send(200, setManualTestResult(id, body.head, body.checkId, body.tested)); return;
+        }
+      }
       if (draftPath) {
         const id = decodeURIComponent(draftPath[1]);
         if (request.method === "GET" && !draftPath[2]) { send(200, await loadDraftState(id)); return; }

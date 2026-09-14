@@ -175,7 +175,7 @@ test("execution delegates command validation and full-output parsing to a regist
   }
 });
 
-function googleTestRepository() {
+function googleTestRepository(options: { fullSuiteFailure?: boolean } = {}) {
   const repo = temporaryDirectory();
   const git = (...args: string[]) => execFileSync("git", args, { cwd: repo }).toString().trim();
   git("init", "-q");
@@ -196,11 +196,13 @@ function googleTestRepository() {
     appendFileSync(process.env.HEPTAPOD_REPOSITORY + '/run-log', filter + '\\n');
     if (readFileSync('built-state', 'utf8') !== readFileSync('state.txt', 'utf8')) throw new Error('Stale build');
     const failed = readFileSync('built-state', 'utf8') !== 'green';
+    const fullSuiteFailure = ${Boolean(options.fullSuiteFailure)} && filter === '--gtest_filter=*';
     console.log('[==========] Running 1 test from 1 test suite.');
     console.log('[ RUN      ] Planet.Works');
     console.log(failed ? '[  FAILED  ] Planet.Works (1 ms)' : '[       OK ] Planet.Works (1 ms)');
-    console.log('[==========] 1 test from 1 test suite ran. (1 ms total)');
-    process.exit(failed ? 1 : 0);
+    if (fullSuiteFailure) console.log('[ RUN      ] Unchanged.Regression\\n[  FAILED  ] Unchanged.Regression (1 ms)');
+    console.log('[==========] ' + (fullSuiteFailure ? '2 tests' : '1 test') + ' from 1 test suite ran. (1 ms total)');
+    process.exit(failed || fullSuiteFailure ? 1 : 0);
   `);
   git("add", "."); git("commit", "-qm", "base");
   const base = git("rev-parse", "HEAD");
@@ -236,6 +238,25 @@ function googleTestRepository() {
   return { repo, git, manifest, config, manifestPath: join(repo, "narrative.json") };
 }
 
+test("GoogleTest fixtures retain runner diagnostics when the process produces no results", () => {
+  for (const launchFailure of [false, true]) {
+    const { repo, manifest, manifestPath, config } = googleTestRepository();
+    config.test.runner.command = launchFailure ? [join(repo, "missing-tests")]
+      : [process.execPath, "-e", "process.exit(53)", "--"];
+    writeFileSync(join(repo, ".heptapod.json"), JSON.stringify(config));
+    const analysis = analyzeNarrative(repo, manifest, manifestPath);
+    const execution = executeNarrativeTests(repo, manifest, manifestPath, () => {}, analysis.testAreasByStep);
+    const run = execution.runsByStep.get("fix")!;
+    const fixture = run.fixtureRuns[0];
+    assert.equal(fixture.status, "failing");
+    assert.equal(fixture.exitCode, launchFailure ? null : 53);
+    assert.equal(fixture.output, "");
+    assert.deepEqual(fixture.observedFailures, []);
+    assert.match(fixture.detail ?? "", launchFailure ? /ENOENT/ : /GoogleTest did not report a completed test run/);
+    assert.match(fixture.detail ?? "", /The test runner did not report a result for this fixture/);
+  }
+});
+
 test("native execution rebuilds each patched state, filters changed fixtures and runs the final suite", () => {
   const { repo, git, manifest, manifestPath } = googleTestRepository();
   const before = git("worktree", "list", "--porcelain");
@@ -253,9 +274,30 @@ test("native execution rebuilds each patched state, filters changed fixtures and
   assert.equal(execution.runsByStep.get("fix")?.expectationMatched, true);
   assert.equal(execution.runsByStep.get("fix")?.scope, "full-suite");
   assert.equal(readFileSync(join(repo, "build-log"), "utf8"), "red\ngreen\n");
-  assert.equal(readFileSync(join(repo, "run-log"), "utf8"), "--gtest_filter=Planet.Works\n--gtest_filter=Planet.Works\n--gtest_filter=*\n");
+  assert.equal(readFileSync(join(repo, "run-log"), "utf8"), "--gtest_filter=Planet.Works\n--gtest_filter=*\n");
+  const finalFixture = execution.runsByStep.get("fix")!.fixtureRuns[0];
+  assert.equal(finalFixture.status, "passing");
+  assert.ok(finalFixture.command.endsWith("--gtest_filter=*"));
   assert.equal(git("worktree", "list", "--porcelain"), before);
   assert.deepEqual(readdirSync(join(repo, "worktrees")), []);
+});
+
+test("one final GoogleTest run reports unrelated failures without failing passing fixtures", () => {
+  for (const batch of [true, false]) {
+    const { repo, manifest, manifestPath, config } = googleTestRepository({ fullSuiteFailure: true });
+    writeFileSync(join(repo, ".heptapod.json"), JSON.stringify({ ...config, test: {
+      ...config.test, runner: { ...config.test.runner, batch },
+    } }));
+    const analysis = analyzeNarrative(repo, manifest, manifestPath);
+    const execution = executeNarrativeTests(repo, manifest, manifestPath, () => {}, analysis.testAreasByStep);
+    const final = execution.runsByStep.get("fix")!;
+    assert.equal(final.status, "failing");
+    assert.deepEqual(final.unexpectedFailures, ["Unchanged.Regression"]);
+    assert.equal(final.fixtureRuns[0].status, "passing");
+    assert.deepEqual(final.fixtureRuns[0].observedFailures, []);
+    assert.ok(final.fixtureRuns[0].command.endsWith("--gtest_filter=*"));
+    assert.equal(readFileSync(join(repo, "run-log"), "utf8"), "--gtest_filter=Planet.Works\n--gtest_filter=*\n");
+  }
 });
 
 test("failed builds prevent stale binaries from running and later steps can recover", () => {
@@ -270,5 +312,5 @@ test("failed builds prevent stale binaries from running and later steps can reco
   assert.match(execution.runsByStep.get("tests")?.detail ?? "", /Build failed/);
   assert.equal(execution.runsByStep.get("tests")?.fixtureRuns[0].status, "not-run");
   assert.equal(execution.runsByStep.get("fix")?.status, "passing");
-  assert.equal(readFileSync(join(repo, "run-log"), "utf8"), "--gtest_filter=Planet.Works\n--gtest_filter=*\n");
+  assert.equal(readFileSync(join(repo, "run-log"), "utf8"), "--gtest_filter=*\n");
 });

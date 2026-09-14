@@ -40,13 +40,13 @@ const DEFAULT_TIMEOUT_MS = 15 * 60 * 1_000;
 const OUTPUT_LIMIT = 200_000;
 const ANSI_ESCAPE = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
 
-function detectTestPlan(worktree: string, config: HeptapodConfig | null): TestPlan | null {
+function detectTestPlan(worktree: string, config: HeptapodConfig | null, resultDirectory: string): TestPlan | null {
   const adapter = runnerAdapters[config?.test?.runner?.format ?? "command"];
   const inferred = adapter.detect?.(worktree);
   const template = config?.test?.runner?.command ?? inferred?.command;
   if (!template) return null;
   return {
-    full: adapter.fullCommand(template),
+    full: adapter.fullCommand(template, resultDirectory),
     setup: config?.test?.prerequisites?.map(({ command }) => testCommand(command)) ?? inferred?.setup ?? [],
     build: config?.test?.build?.map(({ command }) => testCommand(command)) ?? [],
     adapter,
@@ -276,7 +276,7 @@ export function executeNarrativeTests(
     onProgress(`Creating temporary test worktree at ${worktree}`);
     run("git", ["worktree", "add", "--detach", worktree, manifest.source.base], { cwd: repo });
     registered = true;
-    const plan = detectTestPlan(worktree, config);
+    const plan = detectTestPlan(worktree, config, resultDirectory);
     const runsByStep = new Map<string, StepTestRun>();
     if (!plan) {
       for (const step of manifest.steps) {
@@ -326,7 +326,10 @@ export function executeNarrativeTests(
       }
       const finalStep = index === manifest.steps.length - 1;
       const files = [...changedTestFiles];
-      const fixtureCommands = targetedCommands(worktree, plan, files, resultDirectory);
+      const fixtureCommands: TestBatchCommand[] = finalStep
+        ? [{ files: files.filter(file => existsSync(resolve(worktree, file))), command: plan.full }]
+        : targetedCommands(worktree, plan, files, resultDirectory);
+      const parseFixtures = finalStep ? Boolean(plan.adapter.parseBatchResult) : plan.batch;
       if (!dependenciesReady) {
         const detail = `${plan.setup.at(-1)?.display ?? "Test preparation"} failed; tests were not run.`;
         const run = skippedRun(
@@ -368,12 +371,14 @@ export function executeNarrativeTests(
               fixtureRuns.push(...batchFiles.map(file => skippedFixtureRun(file, step, detail ?? "The runner cannot select this fixture.")));
               continue;
             }
-            onProgress(`Running ${batchFiles.length > 1 ? `${batchFiles.length} test fixtures in a batch` : "test file"} after step ${index + 1}/${manifest.steps.length}: ${batchFiles.join(", ")}`);
+            onProgress(finalStep
+              ? `Running the full ${plan.full.display} suite after step ${index + 1}/${manifest.steps.length}: ${step.title}`
+              : `Running ${batchFiles.length > 1 ? `${batchFiles.length} test fixtures in a batch` : "test file"} after step ${index + 1}/${manifest.steps.length}: ${batchFiles.join(", ")}`);
             const result = executeTestCommand(command, worktree, timeoutMs, repo, plan.adapter,
-              plan.batch ? { files: batchFiles, format: plan.fixtureFormat } : undefined);
+              parseFixtures ? { files: batchFiles, format: plan.fixtureFormat } : undefined);
             executedFixtures.push({ command, result });
             for (const file of batchFiles) {
-              if (!plan.batch || result.status === "timed-out" || result.batchError) {
+              if (!parseFixtures || result.status === "timed-out" || result.batchError) {
                 fixtureRuns.push(buildFixtureRun(file, command, result, step));
                 continue;
               }
@@ -385,17 +390,13 @@ export function executeNarrativeTests(
               fixtureRuns.push(buildFixtureRun(file, command, {
                 ...result, status: fixture?.status ?? "failing", durationMs: fixture?.durationMs ?? 0,
                 observedFailures: fixture?.failures ?? [],
-                detail: fixture ? [fixture.detail, batchFiles.length > 1 ? `Executed in a batch of ${batchFiles.length} fixtures; command output and exit code are shared.` : undefined].filter(Boolean).join(" ") || undefined
-                  : "The test runner did not report a result for this fixture.",
+                detail: fixture ? [fixture.detail, finalStep ? "Executed in the full suite; command output and exit code are shared."
+                  : batchFiles.length > 1 ? `Executed in a batch of ${batchFiles.length} fixtures; command output and exit code are shared.` : undefined].filter(Boolean).join(" ") || undefined
+                  : [result.detail, "The test runner did not report a result for this fixture."].filter(Boolean).join(" "),
               }, step));
             }
           }
-          if (finalStep) {
-            onProgress(`Running the full ${plan.full.display} suite after step ${index + 1}/${manifest.steps.length}: ${step.title}`);
-            const fullResult = executeTestCommand(plan.full, worktree, timeoutMs, repo, plan.adapter);
-            const result = combineCommandResults([...buildResults, ...executedFixtures, { command: plan.full, result: fullResult }]);
-            runsByStep.set(step.id, buildStepTestRun(result.command, result, step, "full-suite", files, fixtureRuns));
-          } else if (executedFixtures.length === 0) {
+          if (executedFixtures.length === 0) {
             const detail = files.length ? "No runnable test fixtures were found for this step." : "No changed test files have been introduced by this step.";
             onProgress(detail);
             const run = skippedRun(step, detail, files);
@@ -403,7 +404,7 @@ export function executeNarrativeTests(
             runsByStep.set(step.id, run);
           } else {
             const result = combineCommandResults([...buildResults, ...executedFixtures]);
-            runsByStep.set(step.id, buildStepTestRun(result.command, result, step, "changed-tests", files, fixtureRuns));
+            runsByStep.set(step.id, buildStepTestRun(result.command, result, step, finalStep ? "full-suite" : "changed-tests", files, fixtureRuns));
           }
         }
       }

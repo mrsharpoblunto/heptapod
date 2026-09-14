@@ -7,6 +7,7 @@ import { ReviewProgress } from "../src/web/ReviewProgress";
 import { ReviewCard, canOpenReview, type ReviewSummary } from "../src/web/ReviewCard";
 import { ReviewIndex } from "../src/web/ReviewIndex.js";
 import { PendingReview } from "../src/web/PendingReview.js";
+import { ManualTestList, ManualTestsProvider } from "../src/web/ManualTests";
 import RootLayout from "../app/layout";
 import { buildDiffSegments, DiffView, newestFixtureRuns, parseDiff, resolveStepFile, reviewRailItems, ReviewViewer, semanticDiffLines, semanticDiffSegments } from "../src/web/ReviewViewer.js";
 
@@ -161,6 +162,25 @@ const data: RenderModel = {
   }],
 };
 
+test("manual checks expose a tested dropdown and accumulate in later steps", () => {
+  const first = { label: "Open the dialog", status: "not-run" as const, basis: "expected" as const };
+  const second = { ...first, label: "Resize the dialog" };
+  const steps = [[first], [first, second], []].map((manual, index) => ({ ...data.steps[0], id: `step-${index}`, checks: { automated: [], manual } }));
+  const render = (stepIndex: number) => renderToStaticMarkup(createElement(ManualTestsProvider, { head, children:
+    createElement(ManualTestList, { steps, stepIndex }),
+  }));
+  assert.match(render(0), /0\/1 tested/);
+  assert.doesNotMatch(render(0), /Resize the dialog/);
+  const later = render(2);
+  assert.match(later, /0\/2 tested/);
+  assert.equal(later.match(/Manual test status for Open the dialog/g)?.length, 1);
+  assert.match(later, /<select[^>]*aria-label="Manual test status for Resize the dialog"/);
+  assert.match(later, /<option value="not-tested" selected="">Not tested<\/option>/);
+  assert.match(later, /<option value="tested">Tested<\/option>/);
+  const manualStep = renderToStaticMarkup(createElement(ReviewViewer, { data: { ...data, steps: [{ ...steps[0], kind: "manual" }] }, updatedAt: "2026-09-13" }));
+  assert.equal(manualStep.match(/Manual test status for Open the dialog/g)?.length, 2, "the main content and accumulated list share controls");
+});
+
 test("renders the packaged viewer around shared core model types", () => {
   const markup = renderToStaticMarkup(createElement(ReviewViewer, {
     data,
@@ -191,16 +211,113 @@ test("renders the packaged viewer around shared core model types", () => {
   assert.match(markup, /Show test output for src\/math.test.js/);
   assert.match(markup, /Open src\/math.test.js in diff/);
   assert.match(markup, /src\/math.test.js/);
-  assert.match(markup, /1 full-suite failure/);
+  assert.doesNotMatch(markup, /Test failures|full-suite failure|unexpected-test-details/);
   assert.doesNotMatch(markup, />Expected</);
   assert.doesNotMatch(markup, />Unexpected</);
-  assert.match(markup, /Test output/);
+  assert.match(markup, /FAIL clamps the value/);
   assert.doesNotMatch(markup, /Full suite · pnpm test/);
   assert.doesNotMatch(markup, /Changed test fixtures/);
   assert.doesNotMatch(markup, /Full test suite/);
   assert.match(markup, /Add review comment/);
   assert.doesNotMatch(markup, /Comment on this step/);
   assert.match(markup, /Prepare GitHub draft/);
+});
+
+test("silent fixture failures expose their command, exit code, and saved diagnostics", () => {
+  const run = data.steps[0].testRun!;
+  const fixture = { ...run.fixtureRuns[0], file: "src/Junkship.Tests/UIDocumentTests.cpp",
+    command: "./bin/x64/Debug/Junkship.Tests.exe --gtest_filter=UIDocumentTests.*",
+    exitCode: 53, output: "", observedFailures: [], unexpectedFailures: [],
+    detail: "The test runner did not report a result for this fixture.",
+  };
+  const markup = renderToStaticMarkup(createElement(ReviewViewer, {
+    data: { ...data, steps: [{ ...data.steps[0], testRun: { ...run, scope: "changed-tests", fixtureRuns: [fixture], observedFailures: fixture.observedFailures, unexpectedFailures: fixture.unexpectedFailures } }] },
+    updatedAt: "2026-09-13",
+  }));
+  assert.match(markup, /aria-expanded="false" aria-label="Show test output for src\/Junkship.Tests\/UIDocumentTests.cpp"/);
+  const output = markup.match(/<pre class="test-run-output" hidden="">([\s\S]*?)<\/pre>/)?.[1] ?? "";
+  assert.match(output, /\$ .\/bin\/x64\/Debug\/Junkship.Tests.exe --gtest_filter=UIDocumentTests\.\*/);
+  assert.match(output, /Test command exited with code 53\./);
+  assert.match(output, /The test runner did not report a result for this fixture\./);
+  assert.match(output, /No test output was captured\./);
+});
+
+test("fixture diagnostics cover timeouts, failures without details, and skipped tests", () => {
+  const run = data.steps[0].testRun!;
+  for (const [status, exitCode, detail, expected] of [
+    ["timed-out", null, undefined, "Test command timed out."],
+    ["failing", 1, undefined, "Test command exited with code 1."],
+    ["failing", null, undefined, "Test command failed without an exit code."],
+    ["not-run", null, "Build failed; tests were not run.", "Build failed; tests were not run."],
+  ] as const) {
+    const fixture = { ...run.fixtureRuns[0], status, exitCode, detail, output: "", observedFailures: [], unexpectedFailures: [] };
+    const markup = renderToStaticMarkup(createElement(ReviewViewer, {
+      data: { ...data, steps: [{ ...data.steps[0], testRun: { ...run, scope: "changed-tests", fixtureRuns: [fixture], observedFailures: fixture.observedFailures, unexpectedFailures: fixture.unexpectedFailures } }] },
+      updatedAt: "2026-09-13",
+    }));
+    assert.match(markup, /Show test output for src\/math.test.js/);
+    const output = markup.match(/<pre class="test-run-output" hidden="">([\s\S]*?)<\/pre>/)?.[1] ?? "";
+    assert.ok(output.includes(expected), output);
+  }
+});
+
+test("fixture diagnostics retain captured output and do not expand empty passing results", () => {
+  const run = data.steps[0].testRun!;
+  const render = (fixture: typeof run.fixtureRuns[number]) => renderToStaticMarkup(createElement(ReviewViewer, {
+    data: { ...data, steps: [{ ...data.steps[0], testRun: { ...run, scope: "changed-tests", fixtureRuns: [fixture], observedFailures: fixture.observedFailures, unexpectedFailures: fixture.unexpectedFailures } }] },
+    updatedAt: "2026-09-13",
+  }));
+  const failed = render({ ...run.fixtureRuns[0], detail: "GoogleTest did not report a completed test run." });
+  const output = failed.match(/<pre class="test-run-output" hidden="">([\s\S]*?)<\/pre>/)?.[1] ?? "";
+  assert.match(output, /GoogleTest did not report a completed test run\./);
+  assert.match(output, /FAIL clamps the value/);
+  const passed = render({ ...run.fixtureRuns[0], status: "passing", exitCode: 0, output: "", observedFailures: [], unexpectedFailures: [] });
+  assert.doesNotMatch(passed, /Show test output for|test-run-output/);
+});
+
+test("a silent command failure with no fixture results still has an expandable entry", () => {
+  const run = data.steps[0].testRun!;
+  const markup = renderToStaticMarkup(createElement(ReviewViewer, {
+    data: { ...data, steps: [{ ...data.steps[0], testRun: { ...run, fixtureRuns: [], exitCode: 53,
+      observedFailures: [], unexpectedFailures: ["GoogleTest did not report a completed test run."], output: "",
+      detail: "GoogleTest did not report a completed test run.",
+    } }] },
+    updatedAt: "2026-09-13",
+  }));
+  assert.match(markup, /Show test output for pnpm test/);
+  assert.doesNotMatch(markup, /Test failures|full-suite failure/);
+  assert.match(markup, /Test command exited with code 53\./);
+  assert.match(markup, /No test output was captured\./);
+});
+
+test("failures outside changed fixtures have their own entries and keep passing fixtures green", () => {
+  const run = data.steps[0].testRun!;
+  const markup = renderToStaticMarkup(createElement(ReviewViewer, {
+    data: { ...data, steps: [{ ...data.steps[0], testRun: { ...run,
+      fixtureRuns: [{ ...run.fixtureRuns[0], status: "passing", observedFailures: [], unexpectedFailures: [] }],
+      observedFailures: ["Unchanged.Regression"], unexpectedFailures: ["Unchanged.Regression"],
+    } }] },
+    updatedAt: "2026-09-13",
+  }));
+  assert.match(markup, /Show test output for Unchanged.Regression/);
+  assert.match(markup, /test-result-name">Unchanged.Regression<\/span>/);
+  assert.match(markup, /1\/2 passing/);
+  assert.doesNotMatch(markup, /Open Unchanged.Regression in diff|Test failures|full-suite failure|unexpected-test-details/);
+});
+
+test("build errors appear on each affected fixture with expandable details", () => {
+  const run = data.steps[0].testRun!;
+  const fixture = { ...run.fixtureRuns[0], status: "not-run" as const, output: "error: missing header", exitCode: null,
+    observedFailures: [], unexpectedFailures: [], detail: "Build failed; tests were not run.",
+  };
+  const markup = renderToStaticMarkup(createElement(ReviewViewer, {
+    data: { ...data, steps: [{ ...data.steps[0], testRun: { ...run, fixtureRuns: [fixture], observedFailures: [], unexpectedFailures: [] } }] },
+    updatedAt: "2026-09-13",
+  }));
+  assert.match(markup, /Build failed<svg/);
+  assert.match(markup, /Show test output for src\/math.test.js/);
+  assert.match(markup, /error: missing header/);
+  assert.doesNotMatch(markup, />Not run<|Test failures|full-suite failure/);
 });
 
 test("keeps one root background canvas when rendering completed reviews directly", () => {

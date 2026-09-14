@@ -32,7 +32,7 @@ export interface TestRunnerAdapter {
   dependenciesChanged?(paths: string[]): boolean;
   requiresRebuild(pathsSinceBuild: string[]): boolean;
   validateCommand?(template: string[]): void;
-  fullCommand(template: string[]): TestCommand;
+  fullCommand(template: string[], resultDirectory?: string): TestCommand;
   target(worktree: string, template: string[], file: string, format: FixtureFormat): TargetedTestCommand;
   batch?(worktree: string, template: string[], files: string[], format: FixtureFormat, resultDirectory: string): TestBatchCommand[];
   parseBatchResult?(output: string, command: TestCommand, files: string[], worktree: string, format: FixtureFormat): Record<string, FixtureTestResult>;

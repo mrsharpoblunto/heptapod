@@ -20,7 +20,7 @@ export const googletestRunner: TestRunnerAdapter = {
       throw new Error("the googletest runner supplies its own test filters; omit {files} and --gtest_filter.");
     }
   },
-  fullCommand: (template) => testCommand([...template, "--gtest_color=no", "--gtest_filter=*"]),
+  fullCommand: (template) => testCommand([...template, "--gtest_color=no", "--gtest_print_time=1", "--gtest_filter=*"]),
   target(worktree, template, file, format) {
     const selectors = fixtureSelectors(worktree, file, format);
     if (selectors.length === 0) {

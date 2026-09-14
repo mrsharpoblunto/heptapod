@@ -36,7 +36,7 @@ test("Vitest batches only fixtures in the same owning package and uses unique re
   assert.notEqual(batches[0].command?.resultFile, batches[1].command?.resultFile);
 });
 
-test("real Vitest batch reports preserve passing, failing, and skipped fixture results", () => {
+test("real Vitest batch and full-suite reports preserve passing, failing, and skipped fixture results", () => {
   const root = temporary();
   symlinkSync(resolve("node_modules"), join(root, "node_modules"), "dir");
   writeFileSync(join(root, "a.test.ts"), "import { test, expect } from 'vitest'; test('passes',()=>expect(1).toBe(1));");
@@ -52,7 +52,16 @@ test("real Vitest batch reports preserve passing, failing, and skipped fixture r
   assert.equal(results["b.test.ts"].status, "failing");
   assert.deepEqual(results["b.test.ts"].failures, ["b.test.ts > fails"]);
   assert.equal(results["skip.test.ts"].status, "not-run");
-});
+  const full = vitestRunner.fullCommand([process.execPath, resolve("node_modules/vitest/vitest.mjs"), "run", "{files}"], root);
+  assert.ok(files.every(file => !full.args.includes(file)));
+  const fullResult = spawnSync(full.executable, full.args, { cwd: root, encoding: "utf8", env: { ...process.env, NO_COLOR: "1" }, timeout: 30_000 });
+  assert.equal(fullResult.status, 1, fullResult.stderr);
+  const fullResults = vitestRunner.parseBatchResult!(fullResult.stdout, full, files, root, "auto");
+  assert.equal(fullResults["a.test.ts"].status, "passing");
+  assert.equal(fullResults["b.test.ts"].status, "failing");
+  assert.deepEqual(fullResults["b.test.ts"].failures, ["b.test.ts > fails"]);
+  assert.equal(fullResults["skip.test.ts"].status, "not-run");
+}, 30_000);
 
 test("GoogleTest batches selectors and attributes parameterized failures to their fixture", () => {
   const root = temporary();
@@ -119,12 +128,14 @@ test("execution batches fixtures, rebuilds Vitest only on metadata changes, and 
   assert.equal(readFileSync(join(repo, "build-log"), "utf8"), "red\ngreen\n");
   assert.equal(readFileSync(join(repo, "setup-log"), "utf8"), "setup\nsetup\n");
   const runs = readFileSync(join(repo, "run-log"), "utf8").trim().split("\n").map(line => JSON.parse(line));
-  assert.equal(runs.length, 5, "one batch per step plus the final full suite");
+  assert.equal(runs.length, 4, "one batch per intermediate step and only the full suite at the final step");
+  assert.deepEqual(runs.at(-1).files, [], "the final suite has no fixture filters");
   assert.equal(new Set(runs.map(run => run.mtime)).size, 1, "unchanged sources are not rewritten between steps");
   assert.deepEqual(runs[0].files, ["a.test.ts", "b.test.ts"]);
   assert.deepEqual(result.runsByStep.get("red")?.fixtureRuns.map(run => run.status), ["passing", "failing"]);
   assert.deepEqual(result.runsByStep.get("green")?.fixtureRuns.map(run => run.status), ["passing", "passing"]);
   assert.equal(result.runsByStep.get("final")?.status, "passing");
+  assert.deepEqual(result.runsByStep.get("final")?.fixtureRuns.map(run => run.status), ["passing", "passing"]);
 });
 
 test("explicit rebuild and batching overrides are respected", () => {
@@ -132,7 +143,8 @@ test("explicit rebuild and batching overrides are respected", () => {
     const { repo, execute } = executionRepository({ rebuild, batch: false }); execute();
     assert.equal(readFileSync(join(repo, "build-log"), "utf8"), rebuild === "always" ? "red\ngreen\ngreen\n" : "red\n");
     const runs = readFileSync(join(repo, "run-log"), "utf8").trim().split("\n").map(line => JSON.parse(line));
-    assert.equal(runs.length, 9);
+    assert.equal(runs.length, 7);
+    assert.deepEqual(runs.at(-1).files, []);
     assert.deepEqual(runs[0].files, ["a.test.ts"]);
   }
 });

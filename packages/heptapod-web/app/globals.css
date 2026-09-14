@@ -407,6 +407,9 @@
   .status-timed-out { @apply bg-[var(--warning-muted)] text-[var(--fg)]; }
   .status-not-run, .status-not-applicable { @apply bg-[var(--canvas-inset)] text-[var(--fg-muted)]; }
   .status-blocked { @apply bg-[var(--warning-muted)] text-[var(--fg)]; }
+  .manual-test-status { @apply shrink-0 cursor-pointer border-0 disabled:cursor-default disabled:opacity-60; }
+  .manual-test-error { @apply mt-2 text-xs text-[var(--danger)]; }
+  .manual-test-error button { @apply ml-2 cursor-pointer underline; }
   .command { @apply mt-1 inline-block rounded bg-[var(--canvas-inset)] px-1.5 py-1 text-[9px] text-[var(--fg)]; }
   .test-fixture-runs { @apply mt-3 overflow-hidden rounded-md border border-[var(--border)]; }
   .test-summary-heading { @apply flex items-baseline justify-between gap-2; }
@@ -416,6 +419,7 @@
   .test-fixture-run:hover { @apply bg-[var(--canvas-subtle)]; }
   .test-fixture-file { @apply min-w-0 cursor-pointer bg-transparent px-2.5 py-2 text-left; }
   .test-fixture-file.active { @apply bg-[var(--accent-muted)]; }
+  .test-result-name { @apply cursor-default font-mono text-[10px] break-words; }
   .test-fixture-status-toggle { @apply mr-2.5 cursor-pointer rounded-full; }
   .test-fixture-status-static { @apply mr-2.5; }
   .test-fixture-path { @apply flex min-w-0 font-mono text-[10px]; }
@@ -426,16 +430,6 @@
   .test-fixture-run.expanded .status svg:last-child { transform: rotate(180deg); }
   .test-fixture-run > .test-run-output { @apply col-span-2 m-0 max-h-72 rounded-none border-t border-[var(--border)]; }
   .test-run-output { @apply mt-3 max-h-72 overflow-auto rounded-md bg-[var(--canvas-inset)] p-2.5 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-[var(--fg)]; }
-  .unexpected-test-details { @apply mb-5 border-b border-[var(--border)] pb-4 text-[11px]; }
-  .unexpected-test-details > summary { @apply flex cursor-pointer list-none items-center gap-1.5 font-semibold text-[var(--warning)]; }
-  .unexpected-test-details > summary::-webkit-details-marker, .test-output > summary::-webkit-details-marker { display: none; }
-  .unexpected-test-content { @apply mt-2 rounded-md bg-[var(--warning-muted)] p-2.5 text-[var(--warning)]; }
-  .unexpected-test-content > ul { @apply max-h-52 list-disc overflow-auto pl-4; }
-  .test-output { @apply mt-2 border-t border-[color-mix(in_srgb,var(--warning)_25%,transparent)] pt-2 text-[11px]; }
-  .test-output summary { @apply flex cursor-pointer items-center gap-1 font-semibold text-[var(--warning)]; }
-  .test-output[open] > summary svg { transform: rotate(90deg); }
-  .test-output summary svg { transition: transform 120ms ease; }
-  .test-output pre { @apply mt-2 max-h-64 overflow-auto rounded-md bg-[var(--canvas-inset)] p-2 text-[10px] whitespace-pre-wrap text-[var(--fg)]; }
   .file-pills { @apply mt-2.5 grid gap-1.5; }
   .file-pills .file-link { @apply bg-[var(--canvas-inset)]; }
   .detail-diff { @apply shadow-[var(--shadow)]; }

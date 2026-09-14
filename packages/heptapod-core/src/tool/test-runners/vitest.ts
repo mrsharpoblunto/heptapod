@@ -11,6 +11,14 @@ function canonicalPath(path: string): string {
 /** Vitest console reporters, including output prefixed by pnpm recursive scripts. */
 export const vitestRunner: TestRunnerAdapter = {
   ...commandRunner,
+  fullCommand(template, resultDirectory) {
+    const command = commandRunner.fullCommand(template);
+    if (!resultDirectory) return command;
+    const resultFile = join(resultDirectory, `${randomUUID()}.json`);
+    const separator = ["npm", "bun"].includes(command.executable) && !command.args.includes("--") ? ["--"] : [];
+    return { ...testCommand([command.executable, ...command.args, ...separator,
+      "--reporter=default", "--reporter=json", `--outputFile.json=${resultFile}`]), resultFile };
+  },
   requiresRebuild: (paths) => commandRunner.dependenciesChanged!(paths),
   batch(worktree, template, files, _format, resultDirectory) {
     const packages = new Map<string, string[]>();

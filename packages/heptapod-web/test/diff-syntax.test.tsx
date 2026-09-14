@@ -44,3 +44,25 @@ test("entity decoding preserves source offsets and React escapes source text", (
   assert.match(markup, /<mark class="diff-token-change"><span class="hljs-comment">tail<\/span><\/mark>/);
   assert.doesNotMatch(markup, /<script>/);
 });
+
+test("adjacent ScrollView additions share a continuous highlight across whitespace", () => {
+  const content = '  children?: ReactNode | ((viewport: { offset: number; height: number }) => ReactNode);';
+  const start = content.indexOf("|"), end = content.lastIndexOf(")") + 1;
+  const changes = [...content.slice(start, end).matchAll(/\S+/g)].map(match => ({ start: start + match.index, end: start + match.index + match[0].length }));
+  const markup = renderToStaticMarkup(createElement(SyntaxCode, { content, changes, language: "typescript" }));
+  assert.equal(markup.match(/<mark /g)?.length, 1);
+  assert.match(markup, /<mark class="diff-token-change">\| /);
+  const highlighted = markup.match(/<mark class="diff-token-change">([\s\S]*?)<\/mark>/)?.[1] ?? "";
+  assert.equal(highlighted.replace(/<[^>]*>/g, "").replaceAll("&gt;", ">"), content.slice(start, end));
+  assert.equal(changes.length > 1, true);
+});
+
+test("unchanged code separates highlights while tabs between changed tokens are included", () => {
+  const content = "first\tsecond + unchanged + third fourth";
+  const changes = ["first", "second", "third", "fourth"].map(word => ({ start: content.indexOf(word), end: content.indexOf(word) + word.length }));
+  const original = structuredClone(changes);
+  const markup = renderToStaticMarkup(createElement(SyntaxCode, { content, changes, syntax: [{ start: 0, end: content.length, scopes: [] }] }));
+  assert.equal(markup.match(/<mark /g)?.length, 2);
+  assert.match(markup, /<mark class="diff-token-change">first\tsecond<\/mark> \+ unchanged \+ <mark class="diff-token-change">third fourth<\/mark>/);
+  assert.deepEqual(changes, original);
+});

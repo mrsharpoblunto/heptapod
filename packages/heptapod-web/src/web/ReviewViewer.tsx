@@ -43,7 +43,6 @@ import { DiffExplanationBubble } from "./DiffExplanationBubble";
 import { highlightedHtml, highlightSourceLines, SyntaxCode } from "./DiffSyntax";
 import type {
   Callsite,
-  Check,
   Evidence,
   PatchFile,
   RenderModel,
@@ -51,6 +50,7 @@ import type {
   ReviewComment,
   ParsedTestCaseChange,
   TestFixtureRun,
+  StepTestRun,
   TestCaseChangeKind,
   SemanticDiff,
   DiffExplanation,
@@ -64,27 +64,18 @@ import {
 import { codeCommentLocations, sameCommentLocations } from "./review-comment-store";
 import { ReviewHeader } from "./ReviewHeader";
 import { ReviewProgress, type ReviewStatus } from "./ReviewProgress";
+import { ManualTestFeedback, ManualTestList, ManualTestStatus, ManualTestsProvider } from "./ManualTests";
 import { AnnotatedMarkdown, CodeCommentBlock, CommentAnchor, FinalReview, ReviewCommentsProvider, useReviewComments, useReviewActions, useReviewSelection, useReviewLocked } from "./ReviewComments";
 
 function classNames(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
 }
 
-function statusLabel(status: Check["status"]): string {
-  return {
-    passing: "Passing",
-    failing: "Failing",
-    "not-run": "Not run",
-    blocked: "Blocked",
-    "not-applicable": "N/A",
-  }[status] ?? status;
-}
-
 function kindLabel(kind: RenderStep["kind"]): string {
   return { description: "Context", tests: "Tests", refactor: "Refactor", implementation: "Implementation", manual: "Tests" }[kind];
 }
 
-const ReviewRuntimeContext = createContext<{ reviewId?: string; editorLinks?: RenderModel["editorLinks"]; source?: RenderModel["source"] }>({});
+const ReviewRuntimeContext = createContext<{ reviewId?: string; editorLinks?: RenderModel["editorLinks"]; source?: RenderModel["source"]; steps: RenderStep[] }>({ steps: [] });
 
 function languageForFile(path?: string): string | undefined {
   const extension = path?.split(".").at(-1)?.toLowerCase();
@@ -710,10 +701,6 @@ function SourceDiffView({
   </div>;
 }
 
-function StatusBadge({ status }: Pick<Check, "status">): ReactNode {
-  return <span className={`status status-${status}`}>{statusLabel(status)}</span>;
-}
-
 function ChangeIcon({ change }: { change: TestCaseChangeKind }): ReactNode {
   return <span className="test-change-icon" role="img" aria-label={change}>
     {change === "added" && <Plus aria-hidden="true" size={13} />}
@@ -723,23 +710,27 @@ function ChangeIcon({ change }: { change: TestCaseChangeKind }): ReactNode {
   </span>;
 }
 
-function CheckGroup({ title, checks, empty }: { title: string; checks: Check[]; empty: string }): ReactNode {
-  return <section className="check-group">
-    <div className="eyebrow">{title}</div>
-    {checks.length === 0 ? <p className="muted compact-copy">{empty}</p> : checks.map((check, index) =>
-      <div className="check" key={`${check.label}-${index}`}>
-        <div className="check-heading"><span>{check.label}</span><StatusBadge status={check.status} /></div>
-        {check.command && <code className="command">{check.command}</code>}
-        {check.detail && <p>{check.detail}</p>}
-      </div>)}
-  </section>;
+function testRunOutput(run: TestFixtureRun | StepTestRun): string {
+  const failing = run.status === "failing" || run.status === "timed-out";
+  if (!run.output && !run.detail && !run.observedFailures.length && !failing) return "";
+  const outcome = run.status === "timed-out" ? "Test command timed out."
+    : failing ? `Test command ${run.exitCode === null ? "failed without an exit code" : `exited with code ${run.exitCode}`}.` : "";
+  return [
+    run.command ? `$ ${run.command}` : "",
+    outcome,
+    run.detail,
+    run.observedFailures.join("\n"),
+    run.output || "No test output was captured.",
+  ].filter(Boolean).join("\n\n");
 }
 
-function FixtureStatus({ run }: { run: TestFixtureRun }): ReactNode {
-  const failing = run.status === "failing" || run.status === "timed-out";
+function FixtureStatus({ run, expandable }: { run: TestFixtureRun; expandable: boolean }): ReactNode {
+  const preparationFailure = run.status === "not-run" && run.detail?.includes("failed; tests were not run.")
+    ? run.detail.startsWith("Build failed") ? "Build failed" : "Setup failed" : null;
+  const failing = run.status === "failing" || run.status === "timed-out" || Boolean(preparationFailure);
   return <span className={`status status-${failing ? "failing" : run.status}`}>
-    {failing ? "Failing" : run.status === "passing" ? "Passing" : "Not run"}
-    {run.output && <ChevronDown aria-hidden="true" size={12} />}
+    {preparationFailure ?? (failing ? "Failing" : run.status === "passing" ? "Passing" : "Not run")}
+    {expandable && <ChevronDown aria-hidden="true" size={12} />}
   </span>;
 }
 
@@ -748,37 +739,52 @@ function TestFixtureResult({
   active,
   onSelectFile,
   stepId,
+  testName,
 }: {
   run: TestFixtureRun;
   stepId?: string;
+  testName?: string;
   active: boolean;
   onSelectFile: (file: string) => void;
 }): ReactNode {
   const review = useReviewActions();
   const [expanded, setExpanded] = useState(false);
+  const output = testRunOutput(run);
   const separator = run.file.lastIndexOf("/");
   const directory = separator === -1 ? "" : run.file.slice(0, separator + 1);
   const filename = separator === -1 ? run.file : run.file.slice(separator + 1);
-  return <CommentAnchor target={{ kind: "file", stepId: stepId ?? review?.step.id ?? "", anchor: `fixture:${run.file}`, path: run.file }}><div className={classNames("test-fixture-run", expanded && "expanded")}>
-    <button
+  const label = testName ?? run.file;
+  const content = <div className={classNames("test-fixture-run", expanded && "expanded")}>
+    {testName ? <span className="test-fixture-file test-result-name">{testName}</span> : <button
       aria-label={`Open ${run.file} in diff`}
       className={classNames("test-fixture-file", active && "active")}
       onClick={() => onSelectFile(run.file)}
       title={`Open ${run.file} in diff`}
     >
       <span className="test-fixture-path"><span>{directory}</span><strong>{filename}</strong></span>
-    </button>
-    {run.output ? <button
+    </button>}
+    {output ? <button
       aria-expanded={expanded}
-      aria-label={`${expanded ? "Hide" : "Show"} test output for ${run.file}`}
+      aria-label={`${expanded ? "Hide" : "Show"} test output for ${label}`}
       className="test-fixture-status-toggle"
       onClick={() => setExpanded((current) => !current)}
       title={`${expanded ? "Hide" : "Show"} test output`}
     >
-      <FixtureStatus run={run} />
-    </button> : <span className="test-fixture-status-static"><FixtureStatus run={run} /></span>}
-    {run.output && <pre className="test-run-output" hidden={!expanded}>{run.output}</pre>}
-  </div></CommentAnchor>;
+      <FixtureStatus run={run} expandable />
+    </button> : <span className="test-fixture-status-static"><FixtureStatus run={run} expandable={false} /></span>}
+    {output && <pre className="test-run-output" hidden={!expanded}>{output}</pre>}
+  </div>;
+  return testName ? content : <CommentAnchor target={{ kind: "file", stepId: stepId ?? review?.step.id ?? "", anchor: `fixture:${run.file}`, path: run.file }}>{content}</CommentAnchor>;
+}
+
+function additionalTestFailures(run: StepTestRun | undefined, fixtures: TestFixtureRun[]): Array<{ name: string; run: TestFixtureRun }> {
+  if (!run || (run.status !== "failing" && run.status !== "timed-out")) return [];
+  const listed = new Set(fixtures.flatMap(fixture => fixture.observedFailures));
+  const failures = [...new Set(run.observedFailures)].filter(failure => !listed.has(failure));
+  if (!failures.length && !fixtures.length) return [{ name: run.command || "Test command", run: { ...run, command: run.command ?? "", file: "" } }];
+  return failures.map(name => ({ name, run: { ...run, command: run.command ?? "", file: "", status: "failing",
+    observedFailures: [name], unexpectedFailures: [name],
+  } }));
 }
 
 export function newestFixtureRuns(steps: RenderStep[], stepIndex: number): TestFixtureRun[] {
@@ -803,32 +809,26 @@ function Checks({
   selectedFile: string | null;
   onSelectFile: (file: string) => void;
 }): ReactNode {
+  const { steps } = useContext(ReviewRuntimeContext);
+  const additional = additionalTestFailures(step.testRun, fixtureRuns);
   return <div className="checks">
     <section className="check-group test-results">
       <div className="test-summary-heading">
         <div className="eyebrow">Tests</div>
-        <span className="test-summary-count">{`${fixtureRuns.filter((run) => run.status === "passing").length}/${fixtureRuns.length} passing`}</span>
+        <span className="test-summary-count">{`${fixtureRuns.filter((run) => run.status === "passing").length}/${fixtureRuns.length + additional.length} passing`}</span>
       </div>
-      {fixtureRuns.length === 0
+      {fixtureRuns.length + additional.length === 0
         ? <p className="muted compact-copy">No test fixtures run at this point.</p>
-        : <div className="test-fixture-runs">{fixtureRuns.map((run) => <TestFixtureResult
+        : <div className="test-fixture-runs">{additional.map(({ name, run }) => <TestFixtureResult
+          key={`test:${name}`} testName={name} run={run} active={false} onSelectFile={onSelectFile}
+        />)}{fixtureRuns.map((run) => <TestFixtureResult
           active={selectedFile === run.file}
           key={run.file}
           onSelectFile={onSelectFile}
           run={run}
         />)}</div>}
     </section>
-    <CheckGroup title="Manual checks" checks={step.checks.manual} empty="No manual checks apply at this point." />
-    {step.testRun?.scope === "full-suite" && step.testRun.unexpectedFailures.length > 0 && <details className="unexpected-test-details">
-      <summary><span>{step.testRun.unexpectedFailures.length} full-suite {step.testRun.unexpectedFailures.length === 1 ? "failure" : "failures"}</span></summary>
-      <div className="unexpected-test-content">
-        <ul>{step.testRun.unexpectedFailures.map((failure, index) => <li key={`${failure}-${index}`}>{failure}</li>)}</ul>
-        {step.testRun.output && <details className="test-output">
-          <summary><ChevronRight aria-hidden="true" size={13} />Test output</summary>
-          <pre>{step.testRun.output}</pre>
-        </details>}
-      </div>
-    </details>}
+    <ManualTestList steps={steps} stepIndex={steps.findIndex(item => item.id === step.id)} />
   </div>;
 }
 
@@ -1022,13 +1022,14 @@ function TestsStep({ step, selectedFile, onSelectFile }: StepViewProps): ReactNo
       </section>)}
     </div>
     {step.checks.manual.length > 0 && <div className="manual-test-areas">
+      <ManualTestFeedback />
       {step.checks.manual.map((check, index) => <section className="manual-test-area" key={`${check.label}-${index}`}>
         <div className="test-area-heading">
           <h3>{check.label}</h3>
           <span className="test-type-badge">Manual test</span>
         </div>
         {check.detail && <p>{check.detail}</p>}
-        <StatusBadge status={check.status} />
+        <ManualTestStatus check={check} />
         {check.evidence && <EvidenceGallery evidence={check.evidence} />}
       </section>)}
     </div>}
@@ -1186,12 +1187,16 @@ function ReviewSummaryRail({ onSelectFile }: { onSelectFile: (path: string, step
   const { commentedFiles, changedTests, changedFiles } = reviewRailItems(context.model, context.state?.draft.comments ?? []);
   const changedTestFiles = [...new Map(changedTests.map((test) => [test.path, test])).values()];
   const latestRuns = context.model.steps.slice().reverse().flatMap((step) => step.testRun?.fixtureRuns ?? []);
+  const finalRun = context.model.steps.at(-1)?.testRun;
+  const additional = additionalTestFailures(finalRun, finalRun?.fixtureRuns ?? []);
   return <div className="review-summary-lists">
     <section><h3 className="eyebrow">{commentedFiles.length} {commentedFiles.length === 1 ? "file" : "files"} commented on</h3>
       <ul className="file-pills">{commentedFiles.map((file) => <li key={file.path}><FileLink file={file.path} active={false} onSelect={(path) => onSelectFile(path, file.stepId)} /></li>)}</ul>
     </section>
     <section><h3 className="eyebrow">{changedTests.length} test {changedTests.length === 1 ? "case" : "cases"} changed</h3>
-      <ul className="test-fixture-runs review-test-runs">{changedTestFiles.map(({ path, stepId }) => {
+      <ul className="test-fixture-runs review-test-runs">{additional.map(({ name, run }) => <li key={`test:${name}`}>
+        <TestFixtureResult testName={name} run={run} active={false} onSelectFile={() => {}} />
+      </li>)}{changedTestFiles.map(({ path, stepId }) => {
         const run: TestFixtureRun = latestRuns.find((run) => run.file === path) ?? {
           file: path, command: "", status: "not-run", expectedStatus: "not-specified", expectationMatched: null,
           exitCode: null, durationMs: 0, observedFailures: [], unexpectedFailures: [], output: "",
@@ -1199,6 +1204,7 @@ function ReviewSummaryRail({ onSelectFile }: { onSelectFile: (path: string, step
         return <li key={path}><TestFixtureResult run={run} stepId={stepId} active={false} onSelectFile={(file) => onSelectFile(file, stepId)} /></li>;
       })}</ul>
     </section>
+    <ManualTestList steps={context.model.steps} stepIndex={context.model.steps.length - 1} />
     <section><h3 className="eyebrow">{changedFiles.length} {changedFiles.length === 1 ? "file" : "files"} changed</h3>
       <ul className="file-pills">{changedFiles.map((file) => <li key={file.path}><FileLink file={file.path} from={file.status.startsWith("R") ? file.from : undefined} active={false} onSelect={(path) => onSelectFile(path, file.stepId)} /></li>)}</ul>
     </section>
@@ -1484,7 +1490,7 @@ export function ReviewViewer({
     if (!mobile || !mobilePanel) return;
     const panel = mobilePanel === "steps" ? stepNavRef.current : detailPanelRef.current;
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusable = () => [...(panel?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], textarea:not(:disabled), input:not(:disabled), [tabindex="0"]') ?? [])].filter((element) => element.getClientRects().length > 0);
+    const focusable = () => [...(panel?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], textarea:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]') ?? [])].filter((element) => element.getClientRects().length > 0);
     focusable()[0]?.focus();
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); setMobilePanel(null); }
@@ -1592,7 +1598,8 @@ export function ReviewViewer({
     document.title = `${finalReview ? "Review" : `${step.number}. ${step.title}`} — ${data.title}`;
   }, [data.steps, data.title, step, finalReview, githubReview, githubMetadataLoading]);
 
-  return <ReviewCommentsProvider disabled={mobile} key={`${reviewId ?? data.source.base}:${data.source.head}:${updatedAt}`} model={data} reviewId={reviewId ?? String(data.source.github?.number ?? "")} step={step} updating={currentStatus.status !== "ready"} renderMarkdown={(source) => <Markdown source={source} annotatable={false} />}><ReviewRuntimeContext.Provider value={{ reviewId, editorLinks: data.editorLinks, source: data.source }}><div className={`app-shell${isUpdating ? " app-shell-updating" : ""}${mobile && mobilePanel ? ` mobile-${mobilePanel}-open` : ""}`}>
+  return <ManualTestsProvider reviewId={reviewId} head={data.source.head} disabled={currentStatus.status !== "ready"}>
+    <ReviewCommentsProvider disabled={mobile} key={`${reviewId ?? data.source.base}:${data.source.head}:${updatedAt}`} model={data} reviewId={reviewId ?? String(data.source.github?.number ?? "")} step={step} updating={currentStatus.status !== "ready"} renderMarkdown={(source) => <Markdown source={source} annotatable={false} />}><ReviewRuntimeContext.Provider value={{ reviewId, editorLinks: data.editorLinks, source: data.source, steps: data.steps }}><div className={`app-shell${isUpdating ? " app-shell-updating" : ""}${mobile && mobilePanel ? ` mobile-${mobilePanel}-open` : ""}`}>
     <header className="topbar" inert={mobile && mobilePanel !== null}>
       <ReviewHeader review={{
         id: reviewId ?? `${data.source.base}/${data.source.head}`,
@@ -1681,5 +1688,5 @@ export function ReviewViewer({
         onResizeKeyDown={handleResizeKeyDown}
       />
     </div>
-  </div></ReviewRuntimeContext.Provider></ReviewCommentsProvider>;
+  </div></ReviewRuntimeContext.Provider></ReviewCommentsProvider></ManualTestsProvider>;
 }

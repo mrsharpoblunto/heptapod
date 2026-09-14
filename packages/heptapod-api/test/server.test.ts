@@ -7,7 +7,8 @@ import { once } from "node:events";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, test, vi } from "vitest";
-import { getReview } from "@thestraylight/heptapod-core/database";
+import { getReview, upsertReview } from "@thestraylight/heptapod-core/database";
+import { manualTestId } from "@thestraylight/heptapod-core/manual-tests";
 import { createApiServer } from "../dist/server.js";
 
 const directories: string[] = [];
@@ -60,6 +61,35 @@ async function running(root: string) {
   };
   return { ...api, url, post, waitForJob };
 }
+
+test("manual test endpoints persist completion and reject invalid or stale updates", async () => {
+  const root = mkdtempSync(join(tmpdir(), "heptapod-api-manual-")); directories.push(root);
+  vi.stubEnv("HEPTAPOD_DB", join(root, "reviews.sqlite"));
+  const api = await running(root);
+  const check = { label: "Open the dialog", status: "not-run" as const, basis: "expected" as const };
+  const head = "b".repeat(40), base = "a".repeat(40);
+  const id = `${base}/${head}`;
+  upsertReview(id, { title: "Review", summary: "", source: { base, head, diff: "source.diff", files: [], stats: { additions: 0, deletions: 0, files: 0 } },
+    verification: { base, head, tree: head, exact: true, sourceBytes: 0, patchSteps: 0 },
+    steps: [{ id: "manual", number: 1, kind: "manual", title: "Manual checks", body: "", patch: "", fileDiffs: [],
+      stats: { additions: 0, deletions: 0, files: 0 }, checks: { automated: [], manual: [check] } }],
+  });
+  const endpoint = `${api.url}/reviews/${encodeURIComponent(id)}/manual-tests`;
+  const put = (body: unknown, origin = "http://localhost:3000") => fetch(endpoint, { method: "PUT",
+    headers: { origin, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const body = { head, checkId: manualTestId(check), tested: true };
+  try {
+    assert.deepEqual(await (await fetch(endpoint)).json(), { head, testedChecks: [] });
+    assert.equal((await put(body, "https://other.example")).status, 403);
+    assert.equal((await put({ ...body, tested: "yes" })).status, 400);
+    assert.equal((await put({ ...body, checkId: "unknown" })).status, 400);
+    assert.equal((await put({ ...body, head: "stale" })).status, 400);
+    assert.equal((await put(body)).status, 200);
+    assert.deepEqual(await (await fetch(endpoint)).json(), { head, testedChecks: [manualTestId(check)] });
+    assert.equal((await put({ ...body, tested: false })).status, 200);
+    assert.deepEqual(await (await fetch(endpoint)).json(), { head, testedChecks: [] });
+  } finally { await api.stop(); }
+});
 
 test("accepts preparation immediately, rejects duplicates, polls during agent work, and ingests verified metadata", async () => {
   const { root } = fixture(); const api = await running(root);

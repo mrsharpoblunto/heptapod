@@ -6,6 +6,7 @@ import { resolveDatabasePath, validateReviewId } from "./cache.js";
 import { validateReviewComments } from "./review-draft.js";
 import type { AgentId } from "./agents.js";
 import type { RenderModel, ReviewComment, ReviewDraft } from "./types.js";
+import { accumulatedManualTests, type ManualTestState } from "./manual-tests.js";
 
 export { resolveDatabasePath, validateReviewId } from "./cache.js";
 
@@ -94,7 +95,54 @@ function openDatabase(databasePath?: string): DatabaseSync {
   ) STRICT;`);
   const draftColumns = new Set((database.prepare("PRAGMA table_info(review_drafts)").all() as Array<{ name: string }>).map((column) => column.name));
   if (!draftColumns.has("summary_is_combined")) database.exec("ALTER TABLE review_drafts ADD COLUMN summary_is_combined INTEGER NOT NULL DEFAULT 0");
+  database.exec(`CREATE TABLE IF NOT EXISTS manual_test_results (
+    review_id TEXT NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+    head TEXT NOT NULL,
+    check_id TEXT NOT NULL,
+    PRIMARY KEY (review_id, head, check_id)
+  ) STRICT;`);
   return database;
+}
+
+function manualTestsFromDatabase(database: DatabaseSync, review: StoredReview): ManualTestState {
+  if (!review.payload) throw new Error("An ingested review is required.");
+  const checks = new Set(accumulatedManualTests(review.payload.steps, review.payload.steps.length - 1).map(check => check.id));
+  const rows = database.prepare("SELECT check_id FROM manual_test_results WHERE review_id = ? AND head = ? ORDER BY check_id")
+    .all(review.id, review.headRevision) as Array<{ check_id: string }>;
+  return { head: review.headRevision, testedChecks: rows.map(row => row.check_id).filter(id => checks.has(id)) };
+}
+
+export function getManualTestState(id: string, databasePath?: string): ManualTestState {
+  validateReviewId(id);
+  const database = openDatabase(databasePath);
+  try {
+    const review = getReviewFromDatabase(database, id);
+    if (!review) throw new Error("Review not found.");
+    return manualTestsFromDatabase(database, review);
+  } finally { database.close(); }
+}
+
+export function setManualTestResult(id: string, head: string, checkId: string, tested: boolean, databasePath?: string): ManualTestState {
+  validateReviewId(id);
+  if (typeof head !== "string" || typeof checkId !== "string" || typeof tested !== "boolean") throw new Error("Invalid manual test result.");
+  const database = openDatabase(databasePath);
+  try {
+    database.exec("BEGIN IMMEDIATE;");
+    const review = getReviewFromDatabase(database, id);
+    if (!review?.payload || review.status !== "ready") throw new Error("Wait for the review to finish loading before updating manual tests.");
+    if (review.headRevision !== head) throw new Error("The review changed. Reload before updating manual tests.");
+    if (!accumulatedManualTests(review.payload.steps, review.payload.steps.length - 1).some(check => check.id === checkId)) {
+      throw new Error("Manual test not found in this review.");
+    }
+    if (tested) database.prepare("INSERT OR IGNORE INTO manual_test_results (review_id, head, check_id) VALUES (?, ?, ?)").run(id, head, checkId);
+    else database.prepare("DELETE FROM manual_test_results WHERE review_id = ? AND head = ? AND check_id = ?").run(id, head, checkId);
+    const state = manualTestsFromDatabase(database, review);
+    database.exec("COMMIT;");
+    return state;
+  } catch (error) {
+    if (database.isTransaction) database.exec("ROLLBACK;");
+    throw error;
+  } finally { database.close(); }
 }
 
 interface DraftRow {
@@ -324,6 +372,7 @@ export function upsertReview(id: string, payload: RenderModel, databasePath?: st
       summary = '', summary_is_combined = 0, comments_json = '[]', github_review_id = NULL,
       github_url = NULL, published_at = NULL, publishing_until = 0 WHERE review_id = ?`)
       .run(randomUUID(), payload.source.head, id);
+    database.prepare("DELETE FROM manual_test_results WHERE review_id = ? AND head <> ?").run(id, payload.source.head);
     const review = getReviewFromDatabase(database, id);
     if (!review) throw new Error(`Review ${id} was not stored.`);
     database.exec("COMMIT;");
