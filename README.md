@@ -40,6 +40,19 @@ pnpm exec heptapod repo add
 
 Narrative artifacts remain repository-local under `node_modules/.cache/heptapod/runs`. The CLI performs validation, tests, and structural diff generation in the repository, then uploads a versioned review payload to the global site. The site keeps repositories isolated even when they use the same pull-request numbers.
 
+## Publishing
+
+All public packages share one version and are released in dependency order by the workspace release script. Authenticate an npm account with publish access to the `@thestraylight` scope, then run:
+
+```sh
+npm login
+pnpm release -- minor --plan
+pnpm release -- minor --dry-run
+pnpm release -- minor
+```
+
+The release script accepts only `patch`, `minor`, or `major`; it derives the version from npm rather than trusting a manually supplied number. With no existing releases, `minor` produces the initial `0.1.0`. Before building, the script compares all four package histories, rejects inconsistent or unsafe version states, and automatically resumes a partially completed release when the requested bump identifies it unambiguously. It then requires a clean worktree, confirms interactively, runs the full checks, updates every package version, dry-packs each package, and publishes core, web, CLI, then the skill package. CI can pass `--yes`; alternate distribution tags can use `--tag next`.
+
 The skill installer creates project-local links for both agents: `.agents/skills/heptapod` for Codex and `.claude/skills/heptapod` for Claude. It refuses to overwrite unrelated files; `pnpm exec heptapod-skill uninstall` removes only links owned by the installed package.
 
 The homepage lists registered repositories, supports adding and removing registrations, and shows a setup checklist for each repository. Open a repository to browse its uploaded reviews. Reviews are added and updated only by that repository's CLI or agent skill; the website does not run repository code.

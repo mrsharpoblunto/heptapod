@@ -3,11 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@10.26.2",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@swc/core"
-    ]
-  },
   "scripts": {
     "dev": "pnpm run dev:web",
     "dev:cli": "pnpm --filter @thestraylight/heptapod-core build && pnpm --dir packages/heptapod dev",
@@ -17,6 +12,7 @@
     "lint": "pnpm --recursive lint",
     "test": "pnpm --recursive test",
     "check": "pnpm --recursive check",
-    "pack:check": "pnpm --filter @thestraylight/heptapod-core pack --dry-run && pnpm --filter @thestraylight/heptapod pack --dry-run && pnpm --filter @thestraylight/heptapod-web pack --dry-run && pnpm --filter @thestraylight/heptapod-skill pack --dry-run"
+    "pack:check": "pnpm --filter @thestraylight/heptapod-core pack --dry-run && pnpm --filter @thestraylight/heptapod pack --dry-run && pnpm --filter @thestraylight/heptapod-web pack --dry-run && pnpm --filter @thestraylight/heptapod-skill pack --dry-run",
+    "release": "node scripts/release.mjs"
   }
 }

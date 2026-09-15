@@ -1,2 +1,7 @@
 packages:
   - "packages/*"
+
+linkWorkspacePackages: true
+
+onlyBuiltDependencies:
+  - "@swc/core"
