@@ -7,6 +7,7 @@ import { useToast, ToastMessage } from "./Toasts";
 import { createReviewCommentStore, createReviewSelection, sameItems, type ReviewCommentSnapshot, type DraftState, type CommentEditor } from "./review-comment-store";
 import { createCommentHover } from "./comment-hover";
 import { GitHubIcon, useCachedGitHubPullRequestMetadata } from "./GitHubIdentity";
+import { repositoryServicePath, useRepositoryId } from "./RepositoryContext";
 
 interface AnchorRect { left: number; right: number; top: number; bottom: number }
 interface ReviewCommentActions {
@@ -71,6 +72,7 @@ export function ReviewCommentsProvider({ model, reviewId, step, children, render
   const setSaving = (saving: boolean) => store.update({ saving });
   const setError = (error: string | null) => store.update({ error });
   const notify = useToast();
+  const repositoryId = useRepositoryId();
   const setEditor = (change: CommentEditor | null | ((editor: CommentEditor | null) => CommentEditor | null)) => {
     store.update({ editor: typeof change === "function" ? change(store.getSnapshot().editor) : change });
   };
@@ -81,7 +83,7 @@ export function ReviewCommentsProvider({ model, reviewId, step, children, render
   const persistedRevision = useRef(0);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const autosave = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const endpoint = `/api/service/reviews/${encodeURIComponent(reviewId)}/draft`;
+  const endpoint = repositoryServicePath(repositoryId, `/reviews/${encodeURIComponent(reviewId)}/draft`);
   const githubMetadata = useCachedGitHubPullRequestMetadata(reviewId);
   const enabled = Boolean(!disabled && model.source.github && (githubMetadata?.state === "open" || githubMetadata?.state === "draft"));
   const isLocked = () => updating || store.getSnapshot().publishing || draftLocked(current.current);
@@ -208,16 +210,8 @@ export function ReviewCommentsProvider({ model, reviewId, step, children, render
     store.update({ publishing: true, error: null });
     try {
       const response = await fetch(`${endpoint}/publish`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: state.draft.version }) });
-      const accepted = await response.json();
-      if (!response.ok) throw new Error(accepted.error ?? "Could not publish draft comments.");
-      let result;
-      while (true) {
-        const update = await fetch(`/api/service/jobs/${encodeURIComponent(accepted.jobId)}`, { cache: "no-store" });
-        const job = await update.json();
-        if (!update.ok || (job.status === "failed" || job.status === "cancelled")) throw new Error(job.error ?? "Publication was interrupted. Reload and retry.");
-        if (job.status === "ready") { result = job.result; break; }
-        await new Promise((resolve) => window.setTimeout(resolve, 1_000));
-      }
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Could not publish draft comments.");
       current.current = result; setState(result);
     } catch (error) {
       reportError(error instanceof Error ? error.message : String(error));

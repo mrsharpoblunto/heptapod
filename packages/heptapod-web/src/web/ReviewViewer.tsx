@@ -7,6 +7,8 @@ import {
   ChevronRight,
   ChevronUp,
   ChevronDown,
+  Check,
+  Copy,
   ExternalLink,
   Maximize2,
   Menu,
@@ -66,6 +68,8 @@ import { ReviewHeader } from "./ReviewHeader";
 import { ReviewProgress, type ReviewStatus } from "./ReviewProgress";
 import { ManualTestFeedback, ManualTestList, ManualTestStatus, ManualTestsProvider } from "./ManualTests";
 import { AnnotatedMarkdown, CodeCommentBlock, CommentAnchor, FinalReview, ReviewCommentsProvider, useReviewComments, useReviewActions, useReviewSelection, useReviewLocked } from "./ReviewComments";
+import { useToast } from "./Toasts";
+import { repositoryServicePath, useRepositoryId } from "./RepositoryContext";
 
 function classNames(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -199,11 +203,12 @@ function Markdown({
 
 function EvidenceGallery({ evidence }: { evidence: Evidence[] }): ReactNode {
   const { reviewId } = useContext(ReviewRuntimeContext);
+  const repositoryId = useRepositoryId();
   if (evidence.length === 0) return null;
   return <div className="evidence-grid">{evidence.map((item) => {
     const assetId = item.url.match(/^https:\/\/(?:github\.com\/user-attachments\/assets\/|(?:private-user-images|user-images)\.githubusercontent\.com\/).*?([a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12})/i)?.[1];
     const mediaUrl = reviewId && assetId
-      ? `/api/reviews/${encodeURIComponent(reviewId)}/github-media/${assetId}`
+      ? `/api/reviews/${encodeURIComponent(reviewId)}/github-media/${assetId}${repositoryId ? `?repository=${encodeURIComponent(repositoryId)}` : ""}`
       : item.url;
     if (item.kind === "image") return <a href={item.sourceUrl ?? item.url} target="_blank" rel="noreferrer" key={item.url}>
       <img src={mediaUrl} alt={item.label} />
@@ -856,6 +861,8 @@ function FileLink({
   change?: TestCaseChangeKind;
 }): ReactNode {
   const review = useReviewActions();
+  const notify = useToast();
+  const [copied, setCopied] = useState(false);
   const fileDiff = review?.step.fileDiffs.find((candidate) => candidate.path === file);
   const patch = fileDiff?.patch;
   const { editorLinks, source } = useContext(ReviewRuntimeContext);
@@ -870,8 +877,17 @@ function FileLink({
   const separator = file.lastIndexOf("/");
   const directory = separator === -1 ? "" : file.slice(0, separator + 1);
   const filename = separator === -1 ? file : file.slice(separator + 1);
+  const copyPath = async () => {
+    try {
+      await navigator.clipboard.writeText(file);
+      setCopied(true);
+    } catch {
+      notify(`Unable to copy ${file}.`);
+    }
+  };
   const wrap = (content: ReactNode) => {
-    const link = editorLink || githubLink ? <span className={classNames("file-link-with-editor", editorLink && githubLink && "file-link-with-both-actions", inline && "file-link-with-editor-inline")}>
+    const actionCount = 1 + Number(Boolean(editorLink)) + Number(Boolean(githubLink));
+    const link = <span className={classNames("file-link-with-actions", `file-link-with-${actionCount}-actions`, inline && "file-link-with-actions-inline")}>
       {content}
       <span className="file-link-actions">
       {editorLink && <a className="vscode-link" href={editorLink.url}
@@ -883,8 +899,12 @@ function FileLink({
       </a>}
       {githubLink && <a className="github-file-action" href={githubLink} target="_blank" rel="noreferrer"
         aria-label={`Open ${file} in GitHub`} title="Open file in GitHub"><GitHubIcon /></a>}
+      <button className="copy-file-action" type="button" onClick={copyPath}
+        aria-label={`${copied ? "Copied" : "Copy"} full path for ${file}`} title={copied ? "Copied full path" : "Copy full path"}>
+        {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+      </button>
       </span>
-    </span> : content;
+    </span>;
     return annotatable ? <CommentAnchor target={target} inline={inline} centered>{link}</CommentAnchor> : link;
   };
   if (inline) return wrap(<button className="file-link file-link-inline" onClick={() => onSelect(file)} title={title}>
@@ -1433,6 +1453,7 @@ export function ReviewViewer({
   progress?: string | null;
 }): ReactNode {
   const router = useRouter();
+  const repositoryId = useRepositoryId();
   const mobile = useSyncExternalStore(subscribeMobileReview, isMobileReview, desktopReviewSnapshot);
   const [mobilePanel, setMobilePanel] = useState<"steps" | "details" | null>(null);
   const stepNavRef = useRef<HTMLElement>(null);
@@ -1447,7 +1468,7 @@ export function ReviewViewer({
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
-        const response = await fetch(`/api/service/reviews?review=${encodeURIComponent(reviewId)}`, { cache: "no-store" });
+        const response = await fetch(`${repositoryServicePath(repositoryId, "/reviews")}?review=${encodeURIComponent(reviewId)}`, { cache: "no-store" });
         if (!response.ok) return;
         const review = await response.json() as { status: ReviewStatus; updatedAt: string; progress: string | null };
         if (stopped) return;
@@ -1462,7 +1483,7 @@ export function ReviewViewer({
     };
     timer = setTimeout(poll, 1_000);
     return () => { stopped = true; clearTimeout(timer); };
-  }, [reviewId, router, updatedAt, updating]);
+  }, [reviewId, router, updatedAt, updating, repositoryId]);
 
   const [stepId, setStepId] = useState<string | null>(data.steps[0].id);
   const selectStep = (id: string | null) => { setStepId(id); setMobilePanel(null); };

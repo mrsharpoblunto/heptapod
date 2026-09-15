@@ -44,7 +44,8 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@thestraylight/heptapod-core": "workspace:^"
+    "@thestraylight/heptapod-core": "workspace:^",
+    "@thestraylight/heptapod-web": "workspace:^"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

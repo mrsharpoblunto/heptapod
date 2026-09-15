@@ -434,6 +434,16 @@ export function listReviews(databasePath?: string): StoredReview[] {
   }
 }
 
+/** Read existing reviews without creating or migrating repository-local state. */
+export function listReviewsReadOnly(databasePath?: string): StoredReview[] {
+  const database = new DatabaseSync(resolveDatabasePath(databasePath), { readOnly: true });
+  try {
+    database.exec("PRAGMA query_only = ON; PRAGMA busy_timeout = 5000;");
+    const rows = database.prepare("SELECT * FROM reviews ORDER BY created_at DESC, id ASC").all() as unknown as ReviewRow[];
+    return rows.map(rowToReview);
+  } finally { database.close(); }
+}
+
 export function deleteReview(id: string, databasePath?: string): boolean {
   validateReviewId(id);
   const database = openDatabase(databasePath);

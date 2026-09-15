@@ -5,16 +5,16 @@ import { renderToPipeableStream, renderToStaticMarkup } from "react-dom/server";
 import { test, vi } from "vitest";
 import { SetupProvider, type SetupPromises } from "../src/web/SetupContext";
 import { SetupChecklist } from "../src/web/SetupChecklist";
-import { OpenPullRequestsSection } from "../src/web/OpenPullRequestsSection";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: () => {}, refresh: () => {} }) }));
 
 const readyChecks = (): SetupPromises => ({
+  client: Promise.resolve({ installed: true, version: "0.1.0" }),
   repository: Promise.resolve({ connected: true, name: "example/repo", githubUrl: "https://github.com/example/repo" }),
   difftastic: Promise.resolve({ installed: false }),
   github: Promise.resolve({ installed: true, authenticated: true }),
   skills: Promise.resolve(true),
-  agents: Promise.resolve({ agents: [{ id: "codex", name: "Codex", installed: true, authenticated: true, skillInstalled: true, loginCommand: "codex login", installUrl: "https://example.com" }] }),
+  agents: Promise.resolve({ agents: [{ id: "codex", name: "Codex", installed: true, skillInstalled: true, installUrl: "https://example.com" }] }),
 });
 
 test("streams each checklist check independently and reuses settled layout promises on remount", async () => {
@@ -43,19 +43,8 @@ test("streams each checklist check independently and reuses settled layout promi
   assert.match(remounted, /Status OK/);
   assert.match(remounted, /aria-expanded="false"/);
   assert.match(remounted, /class="setup-panel" aria-hidden="true" inert=""/);
-  assert.match(remounted, /Close setup checklist/);
+  assert.doesNotMatch(remounted, /Close setup checklist/);
   assert.doesNotMatch(remounted, /setup-disclosure|Expand setup checklist/);
-});
-
-test("PR discovery consumes the shared setup promises and remains hidden without an installed agent", async () => {
-  const output = new PassThrough(); let html = "";
-  output.on("data", (chunk) => { html += chunk.toString(); });
-  const ended = new Promise<void>((resolve, reject) => { output.on("end", resolve); output.on("error", reject); });
-  const stream = renderToPipeableStream(createElement(SetupProvider, {
-    promises: { ...readyChecks(), agents: Promise.resolve({ agents: [] }) }, children: createElement(OpenPullRequestsSection, { importedIds: [], includeClosed: false }),
-  }), { onAllReady: () => stream.pipe(output), onError: (error) => { output.destroy(error as Error); } });
-  await ended;
-  assert.equal(html, "");
 });
 
 test("reports a problem in the header when a completed check fails", async () => {

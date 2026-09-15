@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getReview } from "@thestraylight/heptapod-core/database";
 import { resolveGitHubMediaUrl } from "../../../../../../src/web/github-metadata";
 import type { Evidence } from "@thestraylight/heptapod-core/types";
+import { repositoryDatabaseForRequest } from "../../../../../../src/web/repository-request";
 
 interface RouteContext {
   params: Promise<{ id: string; assetId: string }>;
@@ -20,7 +21,9 @@ function reviewEvidence(review: NonNullable<ReturnType<typeof getReview>>): Evid
 
 export async function GET(request: Request, { params }: RouteContext) {
   const { id, assetId } = await params;
-  const review = getReview(id);
+  const databasePath = repositoryDatabaseForRequest(request);
+  if (databasePath === null) return NextResponse.json({ error: "Repository not found" }, { status: 404 });
+  const review = getReview(id, databasePath);
   const github = review?.payload?.source.github;
   const evidence = review && reviewEvidence(review).find((item) => (item.kind === "video" || item.kind === "image") && item.url.includes(assetId));
   if (!review || !github || !evidence || evidence.kind === "link") return NextResponse.json({ error: "Media evidence not found" }, { status: 404 });

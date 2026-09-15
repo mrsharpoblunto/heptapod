@@ -25,14 +25,6 @@
         "command": [
           "pnpm",
           "--filter",
-          "@thestraylight/heptapod-api",
-          "build"
-        ]
-      },
-      {
-        "command": [
-          "pnpm",
-          "--filter",
           "@thestraylight/heptapod",
           "build"
         ]

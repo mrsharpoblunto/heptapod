@@ -1,10 +1,9 @@
 import { validateReviewId } from "./cache.js";
-
-const DEFAULT_SITE_URL = "http://localhost:3000";
+import { serviceWebUrl } from "./service-config.js";
 
 export function buildReviewUrl(id: string, siteUrl?: string): string {
   validateReviewId(id);
-  const base = new URL(siteUrl ?? process.env.HEPTAPOD_URL ?? DEFAULT_SITE_URL);
+  const base = new URL(siteUrl ?? process.env.HEPTAPOD_URL ?? serviceWebUrl());
   if (base.protocol !== "http:" && base.protocol !== "https:") {
     throw new Error("Heptapod site URL must use http or https.");
   }

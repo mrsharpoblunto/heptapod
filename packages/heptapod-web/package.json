@@ -8,6 +8,9 @@
     "heptapod-web": "scripts/heptapod-web.mjs",
     "heptapod-web-dev": "scripts/heptapod-web-dev.mjs"
   },
+  "exports": {
+    "./launcher": "./scripts/heptapod-web.mjs"
+  },
   "files": [
     ".next/*.json",
     ".next/*.js",
@@ -60,8 +63,7 @@
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "tailwindcss": "^4.2.1",
-    "@thestraylight/heptapod-core": "workspace:^",
-    "@thestraylight/heptapod-api": "workspace:^"
+    "@thestraylight/heptapod-core": "workspace:^"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

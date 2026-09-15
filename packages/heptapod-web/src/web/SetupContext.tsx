@@ -8,6 +8,7 @@ import type { GitHubStatus } from "./setup";
 import type { DifftasticStatus } from "@thestraylight/heptapod-core/difftastic";
 
 export interface SetupPromises {
+  client: Promise<{ installed: boolean; version?: string }>;
   difftastic: Promise<DifftasticStatus>;
   repository: Promise<ConnectedRepository>;
   github: Promise<GitHubStatus>;

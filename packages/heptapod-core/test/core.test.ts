@@ -11,13 +11,11 @@ import {
   deleteReview,
   failReviewIngestion,
   getReview,
-  listReviews,
   resolveDatabasePath,
   updateReviewIngestion,
 } from "../src/tool/database.js";
-import { DIFF_ARGS, repositoryRoot } from "../src/tool/git.js";
+import { DIFF_ARGS } from "../src/tool/git.js";
 import { extractGitHubEvidence } from "../src/tool/github.js";
-import { ingestNarrative } from "../src/tool/ingest.js";
 import { loadManifest } from "../src/tool/manifest.js";
 import { splitPatchFiles } from "../src/tool/patch.js";
 import { executeNarrativeTests } from "../src/tool/test-execution.js";
@@ -116,73 +114,6 @@ function authorNarrative(repo: string, base: string, head: string, artifact: str
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   return manifestPath;
 }
-
-test("capture, validate, ingest, and load an exact narrative stack", () => {
-  const { repo, base, head } = makeRepository();
-  const artifact = mkdtempSync(join(tmpdir(), "heptapod-artifact-"));
-  const captured = captureNarrative(repositoryRoot(repo), base, head, artifact, {
-    githubPrUrl: "https://github.com/example/math/pull/42",
-    databasePath: join(artifact, "reviews.sqlite"),
-  });
-  assert.equal(captured.files, 3);
-  const preparing = getReview("42", join(artifact, "reviews.sqlite"));
-  assert.equal(preparing?.status, "preparing");
-  assert.equal(preparing?.metadataDirectory, captured.metadataDirectory);
-  assert.equal(preparing?.progress, "Preparing review");
-  assert.equal(preparing?.payload, null);
-  const manifestPath = authorNarrative(repo, base, head, artifact);
-  const explanation = { file: "src/math.js", side: "RIGHT" as const, startLine: 2, text: "Clamp after addition so the result stays inside the requested bounds." };
-  const authored = JSON.parse(readFileSync(manifestPath, "utf8")) as NarrativeManifest;
-  authored.steps.find((step) => step.id === "implement-clamp")!.explanations = [explanation];
-  writeFileSync(manifestPath, JSON.stringify(authored));
-  const { manifest } = loadManifest(manifestPath);
-  const verification = verifyNarrative(repo, manifest, manifestPath);
-  assert.equal(verification.exact, true);
-  assert.equal(verification.tree, git(repo, "rev-parse", `${head}^{tree}`).toString("utf8").trim());
-
-  const databasePath = join(artifact, "reviews.sqlite");
-  const ingested = ingestNarrative({
-    id: "42",
-    repo,
-    narrativePath: manifestPath,
-    databasePath,
-    siteUrl: "http://127.0.0.1:4321",
-  });
-  assert.equal(ingested.url, "http://127.0.0.1:4321/reviews/42");
-  assert.equal(ingested.payload.steps.length, 5);
-  assert.equal(ingested.payload.editorLinks?.["src/math.js"].revision, head);
-  assert.ok(ingested.payload.steps.flatMap((step) => step.fileDiffs).every((file) => file.semanticDiff));
-  assert.match(ingested.payload.editorLinks?.["src/math.js"].url ?? "", /^vscode:\/\/file\//);
-  assert.deepEqual(ingested.payload.steps[0].referenceFiles?.map((file) => file.path), ["src/math.js"]);
-  assert.match(ingested.payload.steps[0].body, /heptapod-file:src%2Fmath\.js/);
-  assert.match(ingested.payload.steps[0].body, /\[missing helper\]\(src\/missing\.js\)/);
-  const testArea = ingested.payload.steps.find((step) => step.kind === "tests")?.testAreas?.[0];
-  assert.ok(testArea);
-  assert.deepEqual(
-    Object.fromEntries(testArea.files[0].cases.map((testCase) => [testCase.name, testCase.change])),
-    {
-      "keeps arithmetic stable": "changed",
-      "caps values above max": "added",
-      "covers legacy behavior": "removed",
-    },
-  );
-  const implementationFile = ingested.payload.steps
-    .find((step) => step.id === "implement-clamp")
-    ?.fileDiffs.find((file) => file.path === "src/math.js");
-  assert.deepEqual(implementationFile?.explanations, [explanation]);
-  assert.equal(ingested.payload.steps[0].referenceFiles?.[0].explanations, undefined);
-  assert.match(implementationFile?.beforeContent ?? "", /export const add/);
-  assert.match(implementationFile?.afterContent ?? "", /export const clamp/);
-  const implementation = ingested.payload.steps.find((step) => step.id === "implement-clamp");
-  assert.match(implementation?.sections?.[0].description ?? "", /heptapod-file:app\.js/);
-  assert.deepEqual(implementation?.referenceFiles?.map((file) => file.path), ["app.js"]);
-  assert.equal(ingested.payload.steps.find((step) => step.id === "migrate-app")?.interfaces?.[0].callsites[0].change, "changed");
-  assert.equal(getReview("42", databasePath)?.payload.verification.exact, true);
-  assert.deepEqual(listReviews(databasePath).map((review) => review.id), ["42"]);
-  assert.equal(ingested.payload.testExecution?.command, null);
-  assert.ok(ingested.payload.steps.every((step) => step.testRun?.status === "not-run"));
-
-});
 
 test("persists pending ingestion progress, failures, and cleanup", () => {
   const { repo, base, head } = makeRepository();

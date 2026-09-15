@@ -3,9 +3,9 @@
 import { Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { AgentId } from "@thestraylight/heptapod-core/agents";
-import { RefreshReviewButton } from "./RefreshReviewButton";
 import { ReviewProgress } from "./ReviewProgress";
 import { ReviewHeader, type ReviewHeaderData } from "./ReviewHeader";
+import { ListCard } from "./ListCard";
 
 export interface ReviewSummary extends ReviewHeaderData {
   status: "preparing" | "pending" | "ready" | "failed";
@@ -31,27 +31,24 @@ export function ReviewCard({
   onDelete: (review: ReviewSummary) => void;
   onOpen?: (review: ReviewSummary) => void;
 }): ReactNode {
-  const refreshable = Boolean((review.hasPayload || review.status === "ready" || review.updating) && /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+\/?$/.test(review.sourceUrl ?? ""));
   const clickable = Boolean(onOpen && canOpenReview(review));
-  return <article
-    className={`review-list-item review-card${clickable ? " review-list-item-clickable" : ""}`}
+  return <ListCard className="review-card" clickable={clickable}
     onClick={clickable ? (event) => {
       if (event.target instanceof Element && event.target.closest("a, button")) return;
       onOpen?.(review);
     } : undefined}
   >
-    <ReviewHeader review={review} compact cardActions={<div className={`review-card-actions${refreshable ? " review-card-actions-split" : ""}`}><button
+    <ReviewHeader review={review} compact cardActions={<div className="review-card-actions"><button
       aria-label={`Delete review ${review.id}`}
       className="review-delete"
       disabled={deleting}
       onClick={() => onDelete(review)}
-      title="Delete review and cached narrative"
+      title="Delete imported review"
     >
       <Trash2 aria-hidden="true" size={16} />
     </button>
-    {refreshable && <RefreshReviewButton id={review.id} agentId={review.agentId} disabled={deleting || review.status === "preparing" || review.status === "pending"} />}
     </div>}>
       <ReviewProgress status={review.status} updating={review.updating} progress={review.progress} error={review.error} />
     </ReviewHeader>
-  </article>;
+  </ListCard>;
 }

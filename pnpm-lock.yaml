@@ -13,37 +13,9 @@ importers:
       '@thestraylight/heptapod-core':
         specifier: workspace:^
         version: link:../heptapod-core
-    devDependencies:
-      '@eslint/js':
-        specifier: 9.39.5
-        version: 9.39.5
-      '@types/node':
-        specifier: ^24.10.0
-        version: 24.13.4
-      eslint:
-        specifier: 9.39.5
-        version: 9.39.5(jiti@2.7.0)
-      globals:
-        specifier: ^17.6.0
-        version: 17.12.0
-      tsx:
-        specifier: ^4.23.13
-        version: 4.23.13
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
-      typescript-eslint:
-        specifier: ^8.61.0
-        version: 8.70.0(eslint@9.39.5(jiti@2.7.0))(typescript@6.0.3)
-      vitest:
-        specifier: ^4.1.10
-        version: 4.1.11(@types/node@24.13.4)(vite@8.3.0(@types/node@24.13.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
-
-  packages/heptapod-api:
-    dependencies:
-      '@thestraylight/heptapod-core':
+      '@thestraylight/heptapod-web':
         specifier: workspace:^
-        version: link:../heptapod-core
+        version: link:../heptapod-web
     devDependencies:
       '@eslint/js':
         specifier: 9.39.5
@@ -108,9 +80,6 @@ importers:
       '@tailwindcss/postcss':
         specifier: ^4.2.1
         version: 4.3.3
-      '@thestraylight/heptapod-api':
-        specifier: workspace:^
-        version: link:../heptapod-api
       '@thestraylight/heptapod-core':
         specifier: workspace:^
         version: link:../heptapod-core

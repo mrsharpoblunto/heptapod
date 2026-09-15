@@ -10,6 +10,7 @@ import {
   PullRequestBadges,
   useGitHubPullRequestMetadata,
 } from "./GitHubIdentity";
+import { repositoryReviewPath, useRepositoryId } from "./RepositoryContext";
 
 export interface ReviewHeaderData {
   id: string;
@@ -23,8 +24,8 @@ export interface ReviewHeaderData {
   deletions: number | null;
 }
 
-export function reviewPath(id: string): string {
-  return `/reviews/${id.split("/").map(encodeURIComponent).join("/")}`;
+export function reviewPath(id: string, repositoryId: string | null = null): string {
+  return repositoryReviewPath(repositoryId, id);
 }
 
 function githubSource(sourceUrl: string | null): { repositoryUrl: string; number: string } | null {
@@ -91,12 +92,13 @@ export function ReviewHeader({
   actions?: ReactNode;
   cardActions?: ReactNode;
 }): ReactNode {
+  const repositoryId = useRepositoryId();
   const title = compact
     ? <h2>{review.title}</h2>
     : <strong className="review-title">{review.title}</strong>;
 
   const heading = <div className={`review-heading${compact ? " review-heading-compact" : ""}`}>
-    {!compact && <Link className="review-back-link" href="/" aria-label="Back to reviews" title="Back to reviews">
+    {!compact && <Link className="review-back-link" href={repositoryId ? `/repositories/${encodeURIComponent(repositoryId)}` : "/"} aria-label="Back to reviews" title="Back to reviews">
       <ChevronLeft aria-hidden="true" size={20} />
     </Link>}
     {review.sourceUrl && <Suspense fallback={<PullRequestAvatar metadata={undefined} compact={compact} />}>{metadata ? <PullRequestAvatar metadata={metadata} compact={compact} /> : <Avatar id={review.id} compact={compact} />}</Suspense>}

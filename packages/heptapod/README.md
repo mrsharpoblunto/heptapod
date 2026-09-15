@@ -1,6 +1,6 @@
 # @thestraylight/heptapod
 
-The Heptapod CLI and shared TypeScript core. Install it in the Git repository being reviewed, then run it from within that repository. It captures a comparison, validates an exact narrative patch stack, and ingests the resulting review into SQLite.
+The repository-local Heptapod CLI. Install it in the Git repository being reviewed, then run it from within that repository. It captures a comparison, validates an exact narrative patch stack, runs tests and structural diffs, retains run artifacts locally, and uploads the finished review to the global Heptapod site.
 
 ```sh
 pnpm exec heptapod capture --pr 12315
@@ -8,7 +8,7 @@ pnpm exec heptapod validate --id 12315
 pnpm exec heptapod ingest --pr 12315
 ```
 
-Use `--rev '<base>...<target>'` instead of `--pr` for a branch comparison. Heptapod resolves the repository root with Git. It stores the SQLite database at `node_modules/.cache/heptapod/reviews.sqlite` and each narrative workspace at `node_modules/.cache/heptapod/runs/<review-id>`. The separately installed `@thestraylight/heptapod-web` package reads the same cache automatically.
+Use `--rev '<base>...<target>'` instead of `--pr` for a branch comparison. Heptapod resolves the repository root with Git. Each narrative workspace stays at `node_modules/.cache/heptapod/runs/<review-id>`; the central site stores its own repository-scoped copy of the finished review payload.
 
 During ingestion, Heptapod creates a temporary worktree at the pinned base and applies each step in order. Intermediate steps run only the changed test fixtures introduced so far; the final step runs the complete suite. It records observed results, expectation mismatches, raw output, and failures not represented by the authored expectations, then removes the worktree.
 
@@ -109,4 +109,4 @@ Git resolves the patterns, nested `.gitattributes`, and overrides such as `-ling
 
 Keep generated changes in `source.diff` and their owning step patches: exact reconstruction and builds still include them. Omit them from test/supporting file lists, Critical/Secondary sections, interface sources, callsites, and repository file links in Markdown. Validation and ingestion reject explicit references to excluded files. Coverage still requires every visible changed file; a step containing only generated changes uses an empty `cases`, `sections`, or `interfaces` array.
 
-The CLI is a thin harness around `@thestraylight/heptapod-core`, shared with the web API sidecar. `capture` creates a **Preparing review** database entry and prints its absolute `metadataDirectory` and `narrative` path. `heptapod prepare --pr <number> --agent <codex|claude>` runs capture, agent metadata authoring, validation, and ingestion in sequence.
+The CLI is a thin harness around `@thestraylight/heptapod-core`. `capture` creates a **Preparing review** database entry and prints its absolute `metadataDirectory` and `narrative` path. `heptapod prepare --pr <number> --agent <codex|claude>` runs capture, agent metadata authoring, validation, ingestion, and upload in sequence.

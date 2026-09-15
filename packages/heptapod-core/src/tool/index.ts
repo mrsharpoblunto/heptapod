@@ -3,7 +3,9 @@ export {
   resolveDatabasePath,
   resolveReviewNarrativePath,
   resolveReviewRunDirectory,
+  resolveReviewRunDirectoryForRoot,
   removeReviewRun,
+  removeReviewRunForRoot,
   validateReviewId,
 } from "./cache.js";
 
@@ -39,3 +41,25 @@ export { resolvePullRequest, resolveRevisionRange } from "./review-source.js";
 export { beginReviewPreparation } from "./database.js";
 
 export { captureReview, validateReview, ingestReview } from "./commands.js";
+
+export {
+  findRepository,
+  getRepository,
+  listRepositories,
+  registerRepository,
+  removeRepository,
+  repositoryDatabasePath,
+  resolveHeptapodStateDirectory,
+  resolveRepositoryRegistryPath,
+} from "./repositories.js";
+export type { RegisteredRepository } from "./repositories.js";
+
+export {
+  DEFAULT_SERVICE_PORT,
+  readServiceConfig,
+  resolveServiceConfigPath,
+  serviceApiUrl,
+  serviceWebUrl,
+  writeServiceConfig,
+} from "./service-config.js";
+export type { HeptapodServiceConfig } from "./service-config.js";

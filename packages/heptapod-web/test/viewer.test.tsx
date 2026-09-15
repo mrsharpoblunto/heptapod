@@ -7,6 +7,8 @@ import { ReviewProgress } from "../src/web/ReviewProgress";
 import { ReviewCard, canOpenReview, type ReviewSummary } from "../src/web/ReviewCard";
 import { ReviewIndex } from "../src/web/ReviewIndex.js";
 import { PendingReview } from "../src/web/PendingReview.js";
+import { RepositoryIndex } from "../src/web/RepositoryIndex.js";
+import { RepositoryProvider } from "../src/web/RepositoryContext.js";
 import { ManualTestList, ManualTestsProvider } from "../src/web/ManualTests";
 import RootLayout from "../app/layout";
 import { buildDiffSegments, DiffView, newestFixtureRuns, parseDiff, resolveStepFile, reviewRailItems, ReviewViewer, semanticDiffLines, semanticDiffSegments } from "../src/web/ReviewViewer.js";
@@ -28,7 +30,7 @@ vi.mock("../src/web/GitHubIdentity", async (importOriginal) => ({
 const base = "1111111111111111111111111111111111111111";
 const head = "2222222222222222222222222222222222222222";
 
-test("file links have a separate accessible VS Code action only when a pinned target exists", () => {
+test("file links have accessible copy, VS Code, and GitHub actions when their targets exist", () => {
   const url = "vscode://file/tmp/review%20checkout/src/math.js";
   const editorLinks = { "src/math.js": { url, revision: head, side: "head" as const } };
   const render = (model: RenderModel) => renderToStaticMarkup(createElement(ReviewViewer, { data: model, updatedAt: "2026-09-13" }));
@@ -39,6 +41,8 @@ test("file links have a separate accessible VS Code action only when a pinned ta
   assert.match(markup, /<\/a><a class="github-file-action" href="https:\/\/github.com\/example\/math\/blob\/2222222222222222222222222222222222222222\/src\/math.js"/);
   assert.match(render(data), /aria-label="Open src\/math.js in GitHub"/);
   assert.doesNotMatch(render({ ...data, source: { ...data.source, github: undefined } }), /github-file-action/);
+  assert.match(markup, /class="copy-file-action" type="button" aria-label="Copy full path for src\/math.js" title="Copy full path"/);
+  assert.match(render({ ...data, source: { ...data.source, github: undefined } }), /aria-label="Copy full path for src\/math.js"/);
 });
 
 test("rename widgets show only the moved message", () => {
@@ -482,13 +486,20 @@ test("renders imported reviews and linked pull-request metadata on the index", (
     deletions: 0,
   }] }));
   assert.match(markup, /<h1[^>]*>HEPTAPOD<\/h1>/);
-  assert.match(markup, /Awaiting review/);
+  assert.doesNotMatch(markup, /Awaiting review/);
   assert.doesNotMatch(markup, /heptapod capture --pr/);
   assert.doesNotMatch(markup, /<canvas/);
   assert.match(markup, /progress-spinner/);
   assert.match(markup, /https:\/\/github.com\/example\/math\/pull\/42/);
   assert.match(markup, new RegExp(`https://github.com/example/math/commit/${base}`));
   assert.match(markup, /Sep 11, 2026/);
+});
+
+test("keeps the masthead and adds a linked repository breadcrumb on repository review lists", () => {
+  const markup = renderToStaticMarkup(createElement(RepositoryProvider, { id: "0123456789abcdef",
+    children: createElement(ReviewIndex, { repositoryName: "example/project", reviews: [] }) }));
+  assert.match(markup, /<h1[^>]*>HEPTAPOD<\/h1>/);
+  assert.match(markup, /<a href="\/">Repositories<\/a><span aria-hidden="true">\/<\/span><span class="repository-breadcrumb-current">example\/project<\/span>/);
 });
 
 test("implementation groups expand every critical diff and list secondary descriptions and statuses", () => {
@@ -585,16 +596,22 @@ test("closed and merged pull requests omit comment controls and the GitHub summa
 });
 
 
-test("imported PR cards split delete and refresh actions, including legacy imports without a recorded agent", () => {
+test("imported PR cards can be deleted but can only be updated from the repository CLI", () => {
   const review: ReviewSummary = { id: "42", title: data.title, summary: "", sourceUrl: data.source.github!.pullRequestUrl, baseRevision: base, headRevision: head, updatedAt: "2026-09-12", additions: 1, deletions: 0, status: "ready", progress: null, error: null };
   const props = { deleting: false, onDelete: () => {} };
-  const legacy = renderToStaticMarkup(createElement(ReviewCard, { ...props, review }));
-  assert.match(legacy, /review-card-actions-split/);
-  assert.match(legacy, /aria-label="Refresh review 42"/);
-  assert.match(legacy, /Refresh with the default agent/);
-  assert.doesNotMatch(legacy, /disabled/);
-  const recorded = renderToStaticMarkup(createElement(ReviewCard, { ...props, review: { ...review, agentId: "claude" } }));
-  assert.match(recorded, /Refresh with Claude Code/);
-  const pending = renderToStaticMarkup(createElement(ReviewCard, { ...props, review: { ...review, status: "preparing" } }));
-  assert.doesNotMatch(pending, /Refresh review 42/);
+  const markup = renderToStaticMarkup(createElement(ReviewCard, { ...props, review }));
+  assert.match(markup, /aria-label="Delete review 42"/);
+  assert.doesNotMatch(markup, /Refresh review|review-refresh|review-card-actions-split/);
+});
+
+test("the root repository menu exposes folder-picker, remove, checklist, and repository navigation controls", () => {
+  const repository = { id: "0123456789abcdef", root: "/work/example", name: "example/project", githubUrl: "https://github.com/example/project", createdAt: "2026-09-15", updatedAt: "2026-09-15" };
+  const markup = renderToStaticMarkup(createElement(RepositoryIndex, { entries: [{ repository, checklist: createElement("span", null, "Status OK") }] }));
+  assert.match(markup, /class="repository-add-button" aria-label="Add repository"/);
+  assert.doesNotMatch(markup, /repository-path|absolute\/path/);
+  assert.match(markup, /href="\/repositories\/0123456789abcdef"/);
+  assert.match(markup, /class="repository-card-link"[^>]*aria-label="Open repository example\/project"/);
+  assert.match(markup, /example\/project/);
+  assert.match(markup, /Status OK/);
+  assert.match(markup, /aria-label="Remove repository example\/project"/);
 });

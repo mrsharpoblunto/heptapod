@@ -16,7 +16,7 @@ export const DIFF_ARGS = [
 ];
 
 export function repositoryRoot(repo = "."): string {
-  const cwd = resolve(repo ?? ".");
+  const cwd = resolve(/* turbopackIgnore: true */ repo ?? ".");
   return run("git", ["rev-parse", "--show-toplevel"], { cwd }).stdout.toString("utf8").trim();
 }
 

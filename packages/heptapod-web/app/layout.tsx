@@ -4,8 +4,6 @@ import "./globals.css";
 import { HeptapodBackdrop } from "../src/web/HeptapodBackdrop";
 import { ToastProvider } from "../src/web/Toasts";
 import { GitHubMetadataStoreProvider } from "../src/web/GitHubIdentity";
-import { SetupProvider } from "../src/web/SetupContext";
-import { startSetupChecks } from "../src/web/setup-checks";
 
 export const metadata: Metadata = {
   title: "Heptapod",
@@ -13,12 +11,11 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
-  const setup = startSetupChecks();
   return (
     <html lang="en">
       <body>
         <HeptapodBackdrop />
-        <ToastProvider><GitHubMetadataStoreProvider><SetupProvider promises={setup}>{children}</SetupProvider></GitHubMetadataStoreProvider></ToastProvider>
+        <ToastProvider><GitHubMetadataStoreProvider>{children}</GitHubMetadataStoreProvider></ToastProvider>
       </body>
     </html>
   );

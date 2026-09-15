@@ -8,8 +8,7 @@ This repository is a pnpm monorepo:
 
 - `packages/heptapod-core` — shared capture, validation, ingestion, storage, and agent APIs (`@thestraylight/heptapod-core`)
 - `packages/heptapod` — lightweight CLI harness (`@thestraylight/heptapod`)
-- `packages/heptapod-api` — background API sidecar and job workers (`@thestraylight/heptapod-api`)
-- `packages/heptapod-web` — publishable Next.js review site (`@thestraylight/heptapod-web`)
+- `packages/heptapod-web` — persistent Next.js review site and same-origin control API (`@thestraylight/heptapod-web`)
 - `packages/heptapod-skill` — publishable Codex/Claude skill package (`@thestraylight/heptapod-skill`)
 
 ```sh
@@ -18,41 +17,48 @@ pnpm check
 pnpm dev:web
 ```
 
-`pnpm dev:cli --help` executes the CLI TypeScript source directly. `pnpm dev:web` runs the Next.js development server with hot reload; it defaults to <http://localhost:3000> and starts the API sidecar on port 3001 (the web port plus one). The launcher builds core/API first; restart it after changing those packages.
+`pnpm dev:cli --help` executes the CLI TypeScript source directly. `pnpm dev:web` runs the Next.js development server with hot reload on <http://localhost:3000>. The installed service defaults to <http://localhost:49731>; its API is served by the same process under `/api/service`. The development launcher builds core first; restart it after changing core source.
 
-## Install in a repository
+## Install the site and register repositories
 
-Install the CLI and site in the Git repository you want to review. Run every command from anywhere inside that repository; Heptapod resolves its Git root automatically.
+Install the persistent site once per machine:
 
 ```sh
-pnpm add --save-dev @thestraylight/heptapod @thestraylight/heptapod-web @thestraylight/heptapod-skill
-pnpm exec heptapod-skill install
+pnpm add --global @thestraylight/heptapod
+heptapod service install
 ```
 
-Review data is shared automatically through `node_modules/.cache/heptapod/reviews.sqlite`. This is disposable, repository-local cache data, so it does not require another configuration flag or `.gitignore` entry.
+The service uses port `49731` by default. Change it for the current user with `heptapod service configure --port <port>`; the configuration is shared automatically with every repository CLI.
+
+Install the CLI and skill in each Git repository you want to review. Run repository commands from anywhere inside that repository; Heptapod resolves its Git root automatically.
+
+```sh
+pnpm add --save-dev @thestraylight/heptapod @thestraylight/heptapod-skill
+pnpm exec heptapod-skill install
+pnpm exec heptapod repo add
+```
+
+Narrative artifacts remain repository-local under `node_modules/.cache/heptapod/runs`. The CLI performs validation, tests, and structural diff generation in the repository, then uploads a versioned review payload to the global site. The site keeps repositories isolated even when they use the same pull-request numbers.
 
 The skill installer creates project-local links for both agents: `.agents/skills/heptapod` for Codex and `.claude/skills/heptapod` for Claude. It refuses to overwrite unrelated files; `pnpm exec heptapod-skill uninstall` removes only links owned by the installed package.
 
-The homepage checks Git, GitHub CLI authentication, installed Heptapod skills, and Codex/Claude Code authentication. Imported reviews appear first. When a supported agent is installed, open PRs that have not been imported appear below, newest first, loading more pages as you scroll. Enable **Include closed and merged** to include completed PRs as well; it is off by default. Choose an authenticated agent from **Import** to capture metadata, author and validate the narrative, then ingest it automatically. Setup failures include repair instructions.
+The homepage lists registered repositories, supports adding and removing registrations, and shows a setup checklist for each repository. Open a repository to browse its uploaded reviews. Reviews are added and updated only by that repository's CLI or agent skill; the website does not run repository code.
 
-Setup checks and GitHub identity requests start as server promises and stream through Suspense. Preparation, ingestion, and GitHub draft publication run in the API sidecar's workers; the browser polls the sidecar for progress instead of holding a Next.js route open.
-
-Configure the default import agent and dropdown order in `.heptapod.json`:
-
-```json
-{ "agents": { "preferenceOrder": ["claude", "codex"] } }
-```
-
-The first installed, authenticated agent with its skill installed is the primary **Import** action. Omitted agents follow in the default order (Codex, then Claude Code). The dropdown only appears when multiple agents are installed and authenticated.
+Setup checks and GitHub identity requests start as server promises and stream through Suspense. The same Next.js service handles repository registration, uploaded review storage, manual-test state, and GitHub draft publication. Capture, preparation, tests, structural diffs, and ingestion run only in the repository CLI.
 
 ## CLI
 
 ```sh
 pnpm exec heptapod capture --pr 12315
 pnpm exec heptapod validate --id 12315
-pnpm exec heptapod ingest --pr 12315
-pnpm exec heptapod-web --port 3000
+pnpm exec heptapod ingest --pr 12315 --output ndjson
 ```
+
+Running `pnpm exec heptapod` with no arguments in an interactive terminal opens a multi-select list of open pull requests and reports progress while preparing and uploading each selection. Explicit commands remain available for agents and automation; `--output ndjson` emits one versioned progress event per line.
+
+`pnpm exec heptapod repo sync` registers the current repository and uploads every completed review from its existing local database. This is intended for migrating a repository into the global site; run it deliberately because uploading a review replaces that review's central copy.
+
+Use `--service-port <web-port>` for a one-command override without changing the saved service configuration. For example, `pnpm exec heptapod ingest --pr 12315 --service-port 3000` connects to a development site and its API on port 3000.
 
 For a branch comparison, use `--rev '<base>...<target>'` with `capture` and `ingest`; its stable review ID is `<full-base-sha>/<full-target-sha>`. Narrative source files live beside the database under `node_modules/.cache/heptapod/runs/<review-id>` and are resolved automatically. `validate` accepts that emitted ID through `--id`.
 

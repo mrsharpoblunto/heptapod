@@ -149,6 +149,22 @@
   .additions { @apply text-[var(--success)]; }
   .deletions { @apply text-[var(--danger)]; }
 
+  .repository-section-header { @apply mb-3 flex items-center justify-between gap-3; }
+  .repository-section-header .review-section-title { @apply mb-0; }
+  .repository-add-button { @apply grid size-7 cursor-pointer place-items-center rounded-md border border-[var(--border)] bg-[var(--canvas)] text-[var(--fg-muted)] shadow-[var(--shadow)] hover:border-[var(--fg-muted)] hover:text-[var(--fg)] disabled:cursor-wait disabled:opacity-50; }
+  .repository-list { @apply grid gap-3; }
+  .repository-card { @apply relative min-w-0 items-center gap-x-1 p-3; }
+  .repository-card-link { @apply absolute inset-0 z-[1] rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]; }
+  .repository-open { @apply pointer-events-none flex min-w-0 items-center gap-3 rounded-md p-2 text-left; grid-column: 1; grid-row: 1; }
+  .repository-open > span { @apply flex min-w-0 flex-col; }
+  .repository-open strong { @apply truncate text-sm; }
+  .repository-open small { @apply truncate font-mono text-[11px] text-[var(--fg-muted)]; }
+  .repository-actions { display: contents; }
+  .repository-actions > * { position: relative; z-index: 2; }
+  .repository-actions > .setup-status { grid-column: 2; grid-row: 1; }
+  .repository-actions > .setup-panel { grid-column: 1 / -1; grid-row: 2; }
+  .repository-remove { @apply grid h-8 w-8 place-items-center rounded-md text-[var(--fg-muted)] hover:bg-[var(--danger-muted)] hover:text-[var(--danger)]; grid-column: 3; grid-row: 1; }
+
   .workspace { @apply grid min-w-0 min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden bg-[var(--canvas)]; }
   .step-nav, .detail-panel { @apply relative min-h-0; }
   .step-nav { @apply overflow-auto border-r border-[var(--border)] bg-[var(--canvas-subtle)]; }
@@ -252,16 +268,17 @@
   .file-link { @apply flex w-full max-w-full min-w-0 cursor-pointer items-center gap-2 overflow-hidden rounded-md border border-transparent bg-[var(--canvas-subtle)] px-2.5 py-2 text-left; }
   .file-link-inline { @apply mx-0.5 inline-flex w-auto max-w-full items-baseline rounded-md border-[var(--border)] px-2 py-0 align-baseline; line-height: inherit; }
   .file-link-inline .file-link-filename { @apply text-[0.82em]; line-height: inherit; }
-  .file-link-with-editor { position: relative; display: flex; width: 100%; min-width: 0; }
-  .file-link-with-editor > .file-link { padding-right: 34px; }
-  .file-link-with-editor-inline { display: inline-flex; width: auto; max-width: 100%; vertical-align: baseline; }
-  .file-link-with-both-actions > .file-link { padding-right: 56px; }
+  .file-link-with-actions { position: relative; display: flex; width: 100%; min-width: 0; }
+  .file-link-with-actions > .file-link { padding-right: 34px; }
+  .file-link-with-actions-inline { display: inline-flex; width: auto; max-width: 100%; vertical-align: baseline; }
+  .file-link-with-2-actions > .file-link { padding-right: 56px; }
+  .file-link-with-3-actions > .file-link { padding-right: 78px; }
   .file-link-actions { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); display: flex; }
-  .vscode-link, .github-file-action { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 3px; color: var(--fg-muted); }
-  .vscode-link:hover, .vscode-link:focus-visible, .github-file-action:hover, .github-file-action:focus-visible { color: var(--accent); background: var(--canvas); }
-  .vscode-link:focus-visible, .github-file-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .file-link-with-editor-inline .file-link-actions a { height: 18px; }
-  .github-file-action svg { width: 14px; height: 14px; }
+  .vscode-link, .github-file-action, .copy-file-action { display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 3px; color: var(--fg-muted); background: transparent; cursor: pointer; }
+  .vscode-link:hover, .vscode-link:focus-visible, .github-file-action:hover, .github-file-action:focus-visible, .copy-file-action:hover, .copy-file-action:focus-visible { color: var(--accent); background: var(--canvas); }
+  .vscode-link:focus-visible, .github-file-action:focus-visible, .copy-file-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .file-link-with-actions-inline .file-link-actions > * { height: 18px; }
+  .github-file-action svg, .copy-file-action svg { width: 14px; height: 14px; }
   .file-link-connected { @apply rounded-b-none border-[var(--border)]; }
   .file-link-connected.connected-collapsed { @apply rounded-bl-md; }
   .file-link:hover, .file-link.active { @apply border-[var(--accent)] bg-[var(--accent-muted)]; }
@@ -456,9 +473,18 @@
   .heptapod-backdrop { @apply pointer-events-none fixed inset-0 z-0 block h-full w-full bg-[#d5dddd]; }
   .review-index { @apply relative z-1 mx-auto max-w-5xl px-6 py-6; }
   .review-index-header { @apply mb-4 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3; }
+  .repository-breadcrumb { @apply mb-3 min-w-0; }
+  .repository-breadcrumb .review-section-title { @apply mb-0 flex min-w-0 items-baseline gap-2; }
+  .repository-breadcrumb a { @apply shrink-0 hover:text-[var(--accent)] hover:underline; }
+  .repository-breadcrumb-current { @apply truncate; }
   .review-index-title {
     @apply m-0 text-[34px] font-light tracking-[0.16em] text-[#2c4247];
     font-family: "Century Gothic", "Avenir Next", Futura, sans-serif;
+    text-shadow:
+      0 0 2px rgb(213 221 221),
+      0 0 6px rgb(213 221 221),
+      0 0 12px rgb(213 221 221 / 96%),
+      0 0 22px rgb(213 221 221 / 90%);
   }
   .ingestion-help { @apply mb-5 rounded-lg border border-white/35 bg-white/72 p-3 shadow-[0_12px_40px_rgba(31,35,40,0.08)] backdrop-blur-md dark:border-white/10 dark:bg-[#161b20]/78; }
   .ingestion-help > p { @apply max-w-3xl text-sm leading-6 text-[var(--fg-muted)]; }
@@ -473,8 +499,8 @@
   .setup-agent { @apply mr-3 inline-block whitespace-nowrap align-baseline last:mr-0; }
   .setup-agent .agent-icon { @apply mr-1.5; }
   .setup-checklist { @apply m-0 grid list-none gap-2 p-0; }
-  .setup-status { @apply min-h-8 cursor-pointer rounded-full border border-[var(--border)] bg-[var(--home-panel)] px-2.5 py-1 text-[13px] text-[var(--fg-muted)] backdrop-blur-md hover:border-[var(--fg-muted)]; }
-  .setup-status-label { @apply flex items-center gap-1.5 whitespace-nowrap; }
+  .setup-status { @apply min-h-8 w-36 cursor-pointer rounded-full border border-[var(--border)] bg-[var(--home-panel)] px-2.5 py-1 text-[13px] text-[var(--fg-muted)] backdrop-blur-md hover:border-[var(--fg-muted)]; }
+  .setup-status-label { @apply flex items-center justify-center gap-1.5 whitespace-nowrap; }
   .setup-status svg { @apply shrink-0; }
   .setup-status-ok { color: var(--success); }
   .setup-status-problem { color: var(--danger); }
@@ -482,9 +508,8 @@
   .setup-panel { display: grid; grid-column: 1 / -1; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 110ms ease-out, visibility 0s 110ms; }
   .setup-panel-open { grid-template-rows: 1fr; visibility: visible; transition-delay: 0s; }
   .setup-panel-content { min-height: 0; overflow: hidden; }
-  .setup-details { @apply relative mt-3 mb-0 pr-12; }
+  .setup-details { @apply relative mt-3 mb-0; }
   @media (prefers-reduced-motion: reduce) { .setup-panel { transition: none; } }
-  .setup-dismiss { @apply absolute top-1 right-1 flex size-9 cursor-pointer items-center justify-center rounded-md text-[var(--fg-muted)] hover:bg-black/5 hover:text-[var(--fg)] dark:hover:bg-white/5; }
   .setup-item { @apply flex min-h-6 items-start gap-3 text-sm leading-6; }
   .setup-item > svg { @apply mt-[3px] shrink-0; }
   .setup-ok > svg { @apply text-[var(--success)]; }
@@ -495,6 +520,7 @@
   .review-section-title {
     @apply mb-3 text-xl font-light uppercase tracking-[0.12em] text-[#2c4247];
     font-family: "Century Gothic", "Avenir Next", Futura, sans-serif;
+    text-shadow: 0 0 4px rgb(213 221 221 / 95%), 0 0 9px rgb(213 221 221 / 78%);
   }
   .review-index :is(.ingestion-help, .review-list-item, .empty-state) { background: var(--home-panel); }
   .pull-request-list-header { @apply mb-3 flex flex-wrap items-baseline justify-between gap-3; }
@@ -533,6 +559,7 @@
   .review-list-item-clickable:hover { @apply border-[var(--accent)]; }
   .review-list-content { @apply min-w-0 p-4; }
   .review-list-item.review-card { grid-template-columns: minmax(0, 1fr); }
+  .review-list-item.repository-card { grid-template-columns: minmax(0, 1fr) auto auto; }
   .review-card-header { padding: 16px 16px 8px; min-width: 0; }
   .review-card-body { display: grid; grid-template-columns: minmax(0, 1fr) 48px; min-width: 0; }
   .review-card-details { min-width: 0; padding: 0 16px 16px 64px; }

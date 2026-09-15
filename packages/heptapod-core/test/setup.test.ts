@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test, vi } from "vitest";
@@ -16,8 +16,8 @@ function fixture() {
   return { root, executable };
 }
 test("fetches bounded PR pages with cursors, metadata, and the completed-PR filter", async () => {
-  const { executable } = fixture();
-  executable("gh", `const args=process.argv; const all=args.some(arg=>arg.includes('states:[OPEN,CLOSED,MERGED]'));
+  const { root, executable } = fixture();
+  executable("gh", `const fs=require('node:fs'); const path=require('node:path'); const args=process.argv; fs.writeFileSync(path.join(path.dirname(process.argv[1]),'args'),args.join('\\n')); const all=args.some(arg=>arg.includes('states:[OPEN,CLOSED,MERGED]'));
     const next=args.includes('endCursor=next-page');
     if(args.includes('--paginate')||args.includes('--slurp')) process.exit(1);
     const pr=(number,state)=>({number,state,title:'PR '+number,url:'https://github.com/example/repo/pull/'+number,createdAt:'2026-09-'+number+'T00:00:00Z',baseRefOid:'1111111111111111111111111111111111111111',headRefOid:'2222222222222222222222222222222222222222',additions:25,deletions:7,author:{login:'user',avatarUrl:'https://example.com/avatar',url:'https://github.com/user'}});
@@ -25,6 +25,9 @@ test("fetches bounded PR pages with cursors, metadata, and the completed-PR filt
   const open = await loadPullRequestPage("example/repo");
   assert.deepEqual(open.pullRequests.map((pr) => pr.number), [11]);
   assert.equal(open.hasNextPage, false);
+  await loadPullRequestPage("example/repo", false, undefined, 10);
+  assert.match(readFileSync(join(root, "args"), "utf8"), /pullRequests\(first:10,/);
+  await assert.rejects(loadPullRequestPage("example/repo", false, undefined, 101), /between 1 and 100/);
   const first = await loadPullRequestPage("example/repo", true);
   assert.deepEqual(first.pullRequests.map((pr) => pr.metadata.state), ["merged", "open"]);
   assert.equal(first.hasNextPage, true); assert.equal(first.endCursor, "next-page");
@@ -35,7 +38,7 @@ test("fetches bounded PR pages with cursors, metadata, and the completed-PR filt
   assert.deepEqual(second.pullRequests.map((pr) => pr.number), [10]);
   assert.equal(second.pullRequests[0].metadata.state, "closed"); assert.equal(second.hasNextPage, false);
 });
-test("distinguishes missing CLIs, unauthenticated agents, and missing skills", async () => {
+test("distinguishes missing CLIs and skills without probing agent login state", async () => {
   const { root, executable } = fixture();
   assert.deepEqual(await checkGitHub(), { installed: false, authenticated: false });
   assert.equal(await checkSkills(root), false);
@@ -45,8 +48,8 @@ test("distinguishes missing CLIs, unauthenticated agents, and missing skills", a
   mkdirSync(join(root, ".claude/skills/heptapod"), { recursive: true }); writeFileSync(join(root, ".claude/skills/heptapod/SKILL.md"), "Skill");
   assert.deepEqual(await checkGitHub(), { installed: true, authenticated: false });
   const [codex, claude] = await detectAgents(root);
-  assert.equal(codex.installed, true); assert.equal(codex.authenticated, false); assert.equal(codex.skillInstalled, false);
-  assert.equal(claude.authenticated, true); assert.equal(claude.skillInstalled, true);
+  assert.equal(codex.installed, true); assert.equal(codex.skillInstalled, false);
+  assert.equal(claude.installed, true); assert.equal(claude.skillInstalled, true);
 });
 
 test("agent preferences order detected agents and append omitted agents", async () => {

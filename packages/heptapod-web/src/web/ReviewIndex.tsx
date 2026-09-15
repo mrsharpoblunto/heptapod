@@ -6,10 +6,13 @@ import { reviewPath } from "./ReviewHeader";
 import { ReviewCard, type ReviewSummary } from "./ReviewCard";
 import { useDeleteReview } from "./useDeleteReview";
 import { ReviewListContext } from "./ReviewListContext";
+import Link from "next/link";
+import { useRepositoryId } from "./RepositoryContext";
 export type { ReviewSummary } from "./ReviewCard";
 
-export function ReviewIndex({ reviews: initialReviews, setup, openPullRequests }: { reviews: ReviewSummary[]; setup?: ReactNode; openPullRequests?: ReactNode }) {
+export function ReviewIndex({ reviews: initialReviews, setup, openPullRequests, repositoryName }: { reviews: ReviewSummary[]; setup?: ReactNode; openPullRequests?: ReactNode; repositoryName?: string }) {
   const router = useRouter();
+  const repositoryId = useRepositoryId();
   const [snapshot, setSnapshot] = useState<{ initial: ReviewSummary[]; reviews: ReviewSummary[] } | null>(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const refresh = useCallback(() => setRefreshVersion((version) => version + 1), []);
@@ -24,7 +27,7 @@ export function ReviewIndex({ reviews: initialReviews, setup, openPullRequests }
     let current = initialReviews;
     const poll = async () => {
       try {
-        const response = await fetch("/api/reviews", { cache: "no-store", signal: controller.signal });
+        const response = await fetch(repositoryId ? `/api/repositories/${encodeURIComponent(repositoryId)}/reviews` : "/api/reviews", { cache: "no-store", signal: controller.signal });
         if (response.ok) {
           const next = await response.json() as ReviewSummary[];
           if (!Array.isArray(next) || next.some((review) => typeof review.title !== "string" || typeof review.summary !== "string" || typeof review.hasPayload !== "boolean")) return;
@@ -38,15 +41,17 @@ export function ReviewIndex({ reviews: initialReviews, setup, openPullRequests }
     };
     timer = setTimeout(poll, refreshVersion ? 0 : 1_000);
     return () => { stopped = true; clearTimeout(timer); controller.abort(); };
-  }, [initialReviews, refreshVersion]);
+  }, [initialReviews, refreshVersion, repositoryId]);
 
   return <ReviewListContext.Provider value={context}><main className="review-index-scene">
     <div className="review-index">
       <header className="review-index-header">
-        <h1 className="review-index-title">HEPTAPOD</h1>
+        <div><h1 className="review-index-title">HEPTAPOD</h1></div>
         {setup}
       </header>
-      <h2 className="review-section-title">Awaiting review</h2>
+      {repositoryId && <nav className="repository-breadcrumb" aria-label="Repository">
+        <h2 className="review-section-title"><Link href="/">Repositories</Link><span aria-hidden="true">/</span><span className="repository-breadcrumb-current">{repositoryName}</span></h2>
+      </nav>}
       {reviews.length === 0
         ? <div className="empty-state">No reviews have been ingested yet.</div>
         : <div className="review-list">
@@ -55,7 +60,7 @@ export function ReviewIndex({ reviews: initialReviews, setup, openPullRequests }
             review={review}
             deleting={deleting === review.id}
             onDelete={(item) => void remove(item)}
-            onOpen={(item) => router.push(reviewPath(item.id))}
+            onOpen={(item) => router.push(reviewPath(item.id, repositoryId))}
           />)}
         </div>}
       {openPullRequests}

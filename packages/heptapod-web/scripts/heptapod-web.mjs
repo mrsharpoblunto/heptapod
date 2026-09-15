@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-import { fork, spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
@@ -14,38 +15,50 @@ function option(names, fallback) {
   const index = nextArguments.findIndex((arg) => names.includes(arg) || names.some((name) => arg.startsWith(`${name}=`)));
   return index < 0 ? fallback : nextArguments[index].includes("=") ? nextArguments[index].split("=").slice(1).join("=") : nextArguments[index + 1];
 }
-const port = Number(option(["--port", "-p"], process.env.PORT ?? "3000"));
-const apiPort = development ? port + 1 : Number(process.env.HEPTAPOD_API_PORT ?? port + 1);
-if (!Number.isInteger(port) || port < 1 || port > 65534 || !Number.isInteger(apiPort) || apiPort < 1 || apiPort > 65535 || port === apiPort) {
-  throw new Error("Choose valid, distinct web and API ports.");
+function withoutOptions(values, names) {
+  const result = [];
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (names.includes(value)) { index += 1; continue; }
+    if (names.some((name) => value.startsWith(`${name}=`))) continue;
+    result.push(value);
+  }
+  return result;
 }
-const git = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" });
-const root = process.env.HEPTAPOD_ROOT ?? (git.status === 0 ? git.stdout.trim() : process.cwd());
-const apiEntrypoint = fileURLToPath(import.meta.resolve("@thestraylight/heptapod-api/server"));
-// Workspace development builds shared APIs before starting either harness.
+function servicePort() {
+  const state = process.env.HEPTAPOD_STATE_DIR ?? (process.platform === "darwin"
+    ? join(homedir(), "Library", "Application Support", "Heptapod")
+    : process.platform === "win32"
+      ? join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "Heptapod")
+      : join(process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "heptapod"));
+  try {
+    const value = JSON.parse(readFileSync(join(state, "config.json"), "utf8")).port;
+    if (!Number.isInteger(value) || value < 1024 || value > 65535) throw new Error("invalid port");
+    return value;
+  } catch (error) {
+    if (error?.code === "ENOENT") return 49731;
+    throw new Error(`Invalid Heptapod service config: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+const configuredPort = servicePort();
+const port = Number(option(["--port", "-p"], process.env.PORT ?? String(development ? 3000 : configuredPort)));
+const hostname = option(["--hostname", "-H"], "localhost");
+if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Choose a valid web service port.");
+if (!hostname) throw new Error("Choose a valid web service hostname.");
+// Workspace development builds the shared core API before starting Next.
 if (development) {
-  const apiRoot = resolve(dirname(apiEntrypoint), "..");
   const coreRoot = resolve(dirname(fileURLToPath(import.meta.resolve("@thestraylight/heptapod-core"))), "../..");
-  for (const directory of [coreRoot, apiRoot]) {
+  for (const directory of [coreRoot]) {
     if (!existsSync(resolve(directory, "src"))) continue;
     const localRequire = createRequire(resolve(directory, "package.json"));
     const built = spawnSync(process.execPath, [localRequire.resolve("typescript/bin/tsc"), "-p", resolve(directory, "tsconfig.json")], { stdio: "inherit" });
     if (built.status !== 0) process.exit(built.status ?? 1);
   }
 }
-const hostname = option(["--hostname", "-H"], "localhost");
-const env = { ...process.env, HEPTAPOD_ROOT: root, HEPTAPOD_API_PORT: String(apiPort),
-  HEPTAPOD_API_URL: `http://127.0.0.1:${apiPort}`, HEPTAPOD_WEB_ORIGIN: `http://${hostname}:${port}` };
-const api = fork(resolve(dirname(apiEntrypoint), "cli.js"), [], { env, stdio: ["inherit", "inherit", "inherit", "ipc"] });
-let web;
-let stopping = false;
-function stop(signal = "SIGTERM") { stopping = true; web?.kill(signal); api.kill(signal); }
+const forwardedArguments = withoutOptions(nextArguments, ["--port", "-p", "--hostname", "-H"]);
+const web = spawn(process.execPath, [require.resolve("next/dist/bin/next"), development ? "dev" : "start", packageRoot,
+  "--port", String(port), "--hostname", hostname, ...forwardedArguments], { env: process.env, stdio: "inherit" });
+function stop(signal = "SIGTERM") { web.kill(signal); }
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => stop(signal));
-api.once("error", (error) => { process.stderr.write(`Heptapod API: ${error.message}\n`); stop(); process.exitCode = 1; });
-api.once("exit", (code) => { if (!stopping) { stop(); process.exitCode = code || 1; } });
-api.once("message", (message) => {
-  if (!message?.ready || stopping) return;
-  web = spawn(process.execPath, [require.resolve("next/dist/bin/next"), development ? "dev" : "start", packageRoot, "--port", String(port), ...nextArguments], { env, stdio: "inherit" });
-  web.once("error", (error) => { process.stderr.write(`Heptapod web: ${error.message}\n`); stop(); process.exitCode = 1; });
-  web.once("exit", (code) => { stop(); process.exitCode = code ?? 1; });
-});
+web.once("error", (error) => { process.stderr.write(`Heptapod web: ${error.message}\n`); process.exitCode = 1; });
+web.once("exit", (code) => { process.exitCode = code ?? 1; });

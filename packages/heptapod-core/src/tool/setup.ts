@@ -45,13 +45,19 @@ export interface PullRequestPage {
   endCursor: string | null;
 }
 
-export async function loadPullRequestPage(repository: string, includeClosed = false, after?: string): Promise<PullRequestPage> {
+export async function loadPullRequestPage(
+  repository: string,
+  includeClosed = false,
+  after?: string,
+  pageSize = 25,
+): Promise<PullRequestPage> {
   const [owner, name, ...rest] = repository.split("/");
   if (!owner || !name || rest.length) throw new Error("Expected an owner/repository name.");
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new Error("Pull request page size must be between 1 and 100.");
   // Fetch one bounded page, including diff totals without a request per PR.
   const query = `query($owner:String!,$name:String!,$endCursor:String) {
     repository(owner:$owner,name:$name) {
-      pullRequests(first:25,after:$endCursor,states:[${includeClosed ? "OPEN,CLOSED,MERGED" : "OPEN"}],orderBy:{field:CREATED_AT,direction:DESC}) {
+      pullRequests(first:${pageSize},after:$endCursor,states:[${includeClosed ? "OPEN,CLOSED,MERGED" : "OPEN"}],orderBy:{field:CREATED_AT,direction:DESC}) {
         nodes { number title url createdAt isDraft state baseRefOid headRefOid additions deletions author { login avatarUrl url } }
         pageInfo { hasNextPage endCursor }
       }

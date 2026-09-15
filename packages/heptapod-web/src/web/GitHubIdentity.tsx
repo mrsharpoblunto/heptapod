@@ -26,12 +26,13 @@ const GitHubMetadataStoreContext = createContext<{
 } | null>(null);
 
 // The root layout owns the cache so navigating between the list and a review retains it.
-export function GitHubMetadataStoreProvider({ children }: { children: ReactNode }): ReactNode {
+export function GitHubMetadataStoreProvider({ children, repositoryId }: { children: ReactNode; repositoryId?: string }): ReactNode {
   const [cache, dispatch] = useReducer(metadataCacheReducer, {});
   const requests = useRef(new Map<string, MetadataEntry["promise"]>());
   const load = useCallback((reviewId: string) => {
     if (requests.current.has(reviewId)) return;
-    const promise = fetch(`/api/reviews/${encodeURIComponent(reviewId)}/github-metadata`).then(async (response) => {
+    const query = repositoryId ? `?repository=${encodeURIComponent(repositoryId)}` : "";
+    const promise = fetch(`/api/reviews/${encodeURIComponent(reviewId)}/github-metadata${query}`).then(async (response) => {
       if (!response.ok) return null;
       const result = await response.json() as { metadata: GitHubPullRequestMetadata | null };
       return result.metadata;
@@ -39,7 +40,7 @@ export function GitHubMetadataStoreProvider({ children }: { children: ReactNode 
     requests.current.set(reviewId, promise);
     dispatch({ type: "request", reviewId, promise });
     void promise.then((metadata) => dispatch({ type: "resolve", reviewId, promise, metadata }));
-  }, []);
+  }, [repositoryId]);
   const value = useMemo(() => ({ cache, dispatch, load }), [cache, load]);
   return <GitHubMetadataStoreContext.Provider value={value}>{children}</GitHubMetadataStoreContext.Provider>;
 }

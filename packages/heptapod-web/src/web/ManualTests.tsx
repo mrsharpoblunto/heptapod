@@ -4,13 +4,15 @@ import { createContext, useContext, useEffect, useMemo, useSyncExternalStore, ty
 import type { Check, RenderStep } from "@thestraylight/heptapod-core/types";
 import { accumulatedManualTests, manualTestId } from "@thestraylight/heptapod-core/manual-tests";
 import { createManualTestStore } from "./manual-test-store";
+import { repositoryServicePath, useRepositoryId } from "./RepositoryContext";
 
 const ManualTestsContext = createContext<{ store: ReturnType<typeof createManualTestStore>; disabled: boolean } | null>(null);
 
 export function ManualTestsProvider({ reviewId, head, disabled = false, children }: {
   reviewId?: string; head: string; disabled?: boolean; children: ReactNode;
 }) {
-  const endpoint = reviewId ? `/api/service/reviews/${encodeURIComponent(reviewId)}/manual-tests` : null;
+  const repositoryId = useRepositoryId();
+  const endpoint = reviewId ? repositoryServicePath(repositoryId, `/reviews/${encodeURIComponent(reviewId)}/manual-tests`) : null;
   const store = useMemo(() => createManualTestStore(head, endpoint), [head, endpoint]);
   useEffect(() => {
     const controller = new AbortController();

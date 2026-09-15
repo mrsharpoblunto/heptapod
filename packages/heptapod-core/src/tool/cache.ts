@@ -22,8 +22,12 @@ export function resolveDatabasePath(databasePath?: string): string {
 }
 
 export function resolveReviewRunDirectory(id: string): string {
+  return resolveReviewRunDirectoryForRoot(process.env.HEPTAPOD_ROOT ?? process.cwd(), id);
+}
+
+export function resolveReviewRunDirectoryForRoot(root: string, id: string): string {
   validateReviewId(id);
-  return resolve(resolveCacheDirectory(), "runs", id);
+  return resolve(root, "node_modules/.cache/heptapod/runs", id);
 }
 
 export function resolveReviewNarrativePath(id: string): string {
@@ -31,7 +35,11 @@ export function resolveReviewNarrativePath(id: string): string {
 }
 
 export function removeReviewRun(id: string): boolean {
-  const directory = resolveReviewRunDirectory(id);
+  return removeReviewRunForRoot(process.env.HEPTAPOD_ROOT ?? process.cwd(), id);
+}
+
+export function removeReviewRunForRoot(root: string, id: string): boolean {
+  const directory = resolveReviewRunDirectoryForRoot(root, id);
   if (!existsSync(directory)) return false;
   rmSync(directory, { recursive: true, force: true });
   if (id.includes("/")) {

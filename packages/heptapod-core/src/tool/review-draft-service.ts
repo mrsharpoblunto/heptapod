@@ -30,13 +30,15 @@ export async function githubGraphql<T>(query: string, variables: Record<string, 
   return response.data;
 }
 
-export async function loadDraftState(reviewId: string): Promise<{ draft: ReviewDraft; preview: ReviewDraftPreview }> {
-  const review = getReview(reviewId);
+export interface ReviewStorage { root?: string; databasePath?: string }
+
+export async function loadDraftState(reviewId: string, storage: ReviewStorage = {}): Promise<{ draft: ReviewDraft; preview: ReviewDraftPreview }> {
+  const review = getReview(reviewId, storage.databasePath);
   if (!review?.payload?.source.github) throw new Error("Review drafts are only available for GitHub pull requests.");
-  const draft = getReviewDraft(reviewId);
+  const draft = getReviewDraft(reviewId, storage.databasePath);
   const { base, head } = review.payload.source;
   if (!/^[a-f\d]{40}$/i.test(base) || !/^[a-f\d]{40}$/i.test(head)) throw new Error("The review has invalid Git revisions.");
-  const patch = await execute("git", ["-C", process.env.HEPTAPOD_ROOT ?? process.cwd(), "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--find-renames=50%", base, head, "--"]);
+  const patch = await execute("git", ["-C", storage.root ?? process.env.HEPTAPOD_ROOT ?? process.cwd(), "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--find-renames=50%", base, head, "--"]);
   return { draft, preview: buildReviewDraftPreview(review.payload, draft, patch) };
 }
 
@@ -44,17 +46,17 @@ interface GitHubReview { id: string; body: string; state: string; url: string; a
 interface GitHubReviewComment { body: string }
 
 // Keep the transport injectable so publication can be verified without posting a review.
-export async function publishReviewDraft(reviewId: string, version: number, graphql: typeof githubGraphql = githubGraphql): Promise<{ draft: ReviewDraft; preview: ReviewDraftPreview }> {
-  const state = await loadDraftState(reviewId);
+export async function publishReviewDraft(reviewId: string, version: number, graphql: typeof githubGraphql = githubGraphql, storage: ReviewStorage = {}): Promise<{ draft: ReviewDraft; preview: ReviewDraftPreview }> {
+  const state = await loadDraftState(reviewId, storage);
   if (state.draft.publishedAt) return state;
   if (state.draft.version !== version) throw new Error("This draft changed in another tab. Reload before publishing.");
   if (state.preview.errors.length) throw new Error(state.preview.errors.join("\n"));
   if (!state.preview.body.trim() && !state.preview.threads.length) throw new Error("Add a comment or summary before publishing.");
-  const review = getReview(reviewId)!;
+  const review = getReview(reviewId, storage.databasePath)!;
   const source = githubSourceFromPullRequestUrl(review.payload?.source.github?.pullRequestUrl);
   if (!source) throw new Error("This review does not have a valid GitHub pull request.");
   const [owner, name] = new URL(source.repositoryUrl).pathname.slice(1).split("/");
-  const claimed = claimReviewDraftPublication(reviewId, version);
+  const claimed = claimReviewDraftPublication(reviewId, version, storage.databasePath);
   if (claimed.publishedAt) return { ...state, draft: claimed };
   try {
     const remote = await graphql<{ viewer: { login: string }; repository: { pullRequest: { id: string; headRefOid: string; state: string; reviews: { nodes: GitHubReview[] } } } }>(
@@ -79,7 +81,7 @@ export async function publishReviewDraft(reviewId: string, version: number, grap
     }
     if (!pending || pending.state !== "PENDING") throw new Error("GitHub did not create a pending review.");
     const githubUrl = `${source.pullRequestUrl}/files`;
-    recordGitHubDraft(reviewId, pending.id, githubUrl);
+    recordGitHubDraft(reviewId, pending.id, githubUrl, storage.databasePath);
     const reviewBody = `${state.preview.body}\n\n${marker}`;
     if (pending.body !== reviewBody) {
       await graphql("mutation($input:UpdatePullRequestReviewInput!){updatePullRequestReview(input:$input){pullRequestReview{id}}}",
@@ -99,7 +101,7 @@ export async function publishReviewDraft(reviewId: string, version: number, grap
       const commentMarker = `<!-- heptapod-comment:${thread.commentId} -->`;
       if (existing.some((comment) => comment.body.includes(commentMarker))) continue;
       // Renew the lease during long reviews so another request cannot publish the same threads.
-      recordGitHubDraft(reviewId, pending.id, githubUrl);
+      recordGitHubDraft(reviewId, pending.id, githubUrl, storage.databasePath);
       await graphql(
         "mutation($input:AddPullRequestReviewThreadInput!){addPullRequestReviewThread(input:$input){thread{id}}}",
         { input: { pullRequestReviewId: pending.id, path: thread.path, subjectType: thread.subjectType,
@@ -109,9 +111,9 @@ export async function publishReviewDraft(reviewId: string, version: number, grap
         } },
       );
     }
-    return { ...state, draft: finishReviewDraftPublication(reviewId, true) };
+    return { ...state, draft: finishReviewDraftPublication(reviewId, true, storage.databasePath) };
   } catch (error) {
-    finishReviewDraftPublication(reviewId, false);
+    finishReviewDraftPublication(reviewId, false, storage.databasePath);
     throw error;
   }
 }
