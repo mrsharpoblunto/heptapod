@@ -152,6 +152,16 @@ async function confirm(message) {
   finally { prompt.close(); }
 }
 
+async function releaseOtp(explicit) {
+  const configured = explicit ?? process.env.NPM_CONFIG_OTP ?? process.env.npm_config_otp;
+  if (configured) return configured.trim();
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return undefined;
+  const prompt = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return (await prompt.question("npm OTP for all package publishes (leave blank if your token bypasses 2FA): ")).trim() || undefined;
+  } finally { prompt.close(); }
+}
+
 async function main() {
   if (process.argv.slice(2).some((argument) => argument === "--help" || argument === "-h")) {
     process.stdout.write(usage());
@@ -202,10 +212,11 @@ async function main() {
   run("pnpm", ["check"]);
   if (version !== current) writeVersions(version);
   run("pnpm", ["pack:check"]);
+  const otp = await releaseOtp(options.otp);
   for (const name of publishOrder) {
     if (!unpublished.includes(name)) continue;
     const args = ["--filter", name, "publish", "--access", "public", "--tag", options.tag, "--no-git-checks"];
-    if (options.otp) args.push("--otp", options.otp);
+    if (otp) args.push("--otp", otp);
     run("pnpm", args);
   }
   process.stdout.write(`Published Heptapod ${version}. Commit the version files and tag the release with: git tag v${version}\n`);
