@@ -22,8 +22,11 @@ async function request<T>(base: string, path: string, init?: RequestInit): Promi
   let response: Response;
   try {
     response = await fetch(`${base}${path}`, { ...init, headers: { "Content-Type": "application/json", "X-Heptapod-Client": "cli", ...init?.headers } });
-  } catch {
-    throw new Error(`The global Heptapod service is unavailable at ${base}. Install it with \`pnpm add --global @thestraylight/heptapod\`, then run \`heptapod service start\`.`);
+  } catch (error) {
+    const detail = error instanceof Error
+      ? error.cause instanceof Error ? `${error.message}: ${error.cause.message}` : error.message
+      : String(error);
+    throw new Error(`The global Heptapod service request to ${base}${path} failed (${detail}). Install it with \`pnpm add --global @thestraylight/heptapod\`, then run \`heptapod service start\`.`, { cause: error });
   }
   const result = await response.json().catch(() => ({})) as T & { error?: string; ingestionProtocolVersion?: number };
   if (!response.ok) throw new Error(result.error ?? `Heptapod API request failed with HTTP ${response.status}.`);

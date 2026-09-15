@@ -87,7 +87,6 @@ async function publish(repo: string, review: Awaited<ReturnType<typeof ingestRev
 }
 
 async function interactive(repo: string, base: string): Promise<void> {
-  await ensureRemoteRepository(repo, base);
   const selected = await choosePullRequests(repo);
   if (!selected.length) { process.stdout.write("No pull requests selected.\n"); return; }
   let failed = false;
@@ -180,7 +179,6 @@ async function main(): Promise<void> {
     printResult("Captured source diff and scaffold.", result, mode, report);
   } else if (parsed.command === "prepare") {
     const base = apiUrl(parsed.options["api-url"], parsed.options["service-port"]);
-    await ensureRemoteRepository(repo, base);
     report("stage.started", { stage: "prepare", message: "Preparing review narrative" });
     const review = await prepareReview(repo, required(parsed.options, "pr"), required(parsed.options, "agent"), undefined, Boolean(getReview(required(parsed.options, "pr"))), {
       machineReadable: mode === "ndjson",
@@ -195,7 +193,6 @@ async function main(): Promise<void> {
     printResult("Exact reconstruction verified.", result, mode, report);
   } else if (parsed.command === "ingest") {
     const base = apiUrl(parsed.options["api-url"], parsed.options["service-port"]);
-    await ensureRemoteRepository(repo, base);
     report("stage.started", { stage: "ingest", message: "Starting repository-local ingestion" });
     const review = ingestReview(repo, parsed.options, {
       narrativePath: parsed.options.narrative,
