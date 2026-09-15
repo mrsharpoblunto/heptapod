@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, test, vi } from "vitest";
+
+const child = vi.hoisted(() => ({ spawnSync: vi.fn() }));
+vi.mock("node:child_process", async (load) => ({
+  ...(await load<typeof import("node:child_process")>()),
+  spawnSync: child.spawnSync,
+}));
 import { generateSemanticDiffs, parseDifftasticOutput } from "../src/tool/semantic-diff.js";
 import { loadHeptapodConfig } from "../src/tool/config.js";
 import type { PatchFile, RenderModel } from "../src/tool/types.js";
@@ -15,6 +21,7 @@ function temporary() {
 }
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.clearAllMocks();
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
@@ -25,38 +32,31 @@ function model(files: PatchFile[]): RenderModel {
   return { steps: [{ fileDiffs: files }] } as RenderModel;
 }
 
-function fakeDifft(repo: string) {
-  const executable = join(repo, "difft");
-  const log = join(repo, "calls.jsonl");
-  writeFileSync(executable, `#!${process.execPath}
-const fs = require('node:fs');
-const path = require('node:path');
-if (process.argv.includes('--version')) { console.log('Difftastic 0.70.0'); process.exit(0); }
-const oldPath = process.argv.at(-2), newPath = process.argv.at(-1);
-const before = fs.readFileSync(oldPath, 'utf8'), after = fs.readFileSync(newPath, 'utf8');
-const name = path.basename(newPath);
-fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({name,before,after,oldPath,newPath}) + '\\n');
-if (process.env.DFT_IGNORE_COMMENTS) process.exit(3);
-if (name === 'failure.ts') process.exit(2);
-if (name === 'timeout.ts') { setInterval(() => {}, 1000); }
-else if (name === 'invalid.ts') console.log('{invalid');
-else console.log(JSON.stringify({ language: 'TypeScript', status: 'changed', aligned_lines: [[0,0],[1,1]], chunks: [[{
-  lhs: {line_number:0,changes:[{start:14,end:15,content:before[14]}]},
-  rhs: {line_number:0,changes:[{start:14,end:15,content:after[14]}]}
-}]] }));
-`);
-  chmodSync(executable, 0o755);
-  return { executable, log };
-}
-
 test("ingestion caches exact step snapshots, retries failures, and isolates per-file errors", () => {
   const repo = temporary();
-  const { executable, log } = fakeDifft(repo);
   vi.stubEnv("DFT_IGNORE_COMMENTS", "yes");
+  const invocations: Array<{ name: string; before: string; after: string; oldPath: string; newPath: string }> = [];
+  child.spawnSync.mockImplementation((_executable: string, args: string[], options: { env?: NodeJS.ProcessEnv }) => {
+    if (args.includes("--version")) return { status: 0, stdout: "Difftastic 0.70.0\n", stderr: "" };
+    assert.equal(options.env?.DFT_IGNORE_COMMENTS, undefined);
+    const oldPath = args.at(-2)!, newPath = args.at(-1)!;
+    const before = readFileSync(oldPath, "utf8"), after = readFileSync(newPath, "utf8");
+    const name = basename(newPath);
+    invocations.push({ name, before, after, oldPath, newPath });
+    if (name === "failure.ts") return { status: 2, stdout: "", stderr: "failed" };
+    if (name === "timeout.ts") return { status: null, stdout: "", stderr: "", error: Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }) };
+    if (name === "invalid.ts") return { status: 0, stdout: "{invalid", stderr: "" };
+    return { status: 0, stderr: "", stdout: JSON.stringify({
+      language: "TypeScript", status: "changed", aligned_lines: [[0, 0], [1, 1]], chunks: [[{
+        lhs: { line_number: 0, changes: [{ start: 14, end: 15, content: before[14] }] },
+        rhs: { line_number: 0, changes: [{ start: 14, end: 15, content: after[14] }] },
+      }]],
+    }) };
+  });
   const first = file(), later = file("value.ts", "const value = 2;\n", "const value = 3;\n");
   const data = model([first, file("failure.ts"), file("invalid.ts"), file("timeout.ts"), later, file()]);
   const progress: string[] = [];
-  generateSemanticDiffs(repo, data, (message) => progress.push(message), { executable, timeoutMs: 1500 });
+  generateSemanticDiffs(repo, data, (message) => progress.push(message), { executable: "difft", timeoutMs: 1500 });
   assert.equal(first.semanticDiff?.status, "ready", JSON.stringify({ result: first.semanticDiff, metadata: data.diffGeneration }));
   assert.equal(later.semanticDiff?.status, "ready");
   assert.deepEqual(data.steps[0].fileDiffs[1].semanticDiff, { status: "fallback", reason: "Difftastic failed" });
@@ -65,13 +65,16 @@ test("ingestion caches exact step snapshots, retries failures, and isolates per-
   assert.equal(data.diffGeneration?.ready, 3);
   assert.equal(data.diffGeneration?.fallback, 3);
   assert.match(progress.at(-1)!, /ready: 3; standard fallbacks: 3/);
-  const calls = () => readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line));
-  assert.equal(calls().length, 5);
-  assert.deepEqual(calls().filter((call) => call.name === "value.ts").map((call) => [call.before, call.after]),
+  const diffCalls = () => child.spawnSync.mock.calls.filter((call) => !(call[1] as string[]).includes("--version"));
+  assert.equal(diffCalls().length, 5);
+  assert.deepEqual(invocations.filter((call) => call.name === "value.ts").map((call) => [call.before, call.after]),
     [[first.beforeContent, first.afterContent], [later.beforeContent, later.afterContent]]);
-  for (const call of calls()) assert.throws(() => readFileSync(call.oldPath));
-  generateSemanticDiffs(repo, model([file(), file("failure.ts")]), () => {}, { executable, timeoutMs: 1500 });
-  assert.equal(calls().length, 6, "successful results survive another ingestion; failed ones are retried");
+  for (const call of invocations) {
+    assert.throws(() => readFileSync(call.oldPath));
+    assert.throws(() => readFileSync(call.newPath));
+  }
+  generateSemanticDiffs(repo, model([file(), file("failure.ts")]), () => {}, { executable: "difft", timeoutMs: 1500 });
+  assert.equal(diffCalls().length, 6, "successful results survive another ingestion; failed ones are retried");
 });
 
 test("missing executable, missing snapshots, binaries, and oversized inputs retain standard diffs", () => {
@@ -79,6 +82,7 @@ test("missing executable, missing snapshots, binaries, and oversized inputs reta
   const files = [file(), { ...file(), beforeContent: undefined }, file("nul.ts", "\0", "x"), file("huge.ts", "x".repeat(1_000_001), "x")];
   const data = model(files);
   const patches = files.map((file) => file.patch);
+  child.spawnSync.mockReturnValue({ status: null, stdout: "", stderr: "", error: Object.assign(new Error("missing"), { code: "ENOENT" }) });
   generateSemanticDiffs(repo, data, () => {}, { executable: join(repo, "missing") });
   assert.ok(files.every((file) => file.semanticDiff?.status === "fallback"));
   assert.deepEqual(files.map((file) => file.patch), patches);

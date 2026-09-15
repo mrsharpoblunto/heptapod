@@ -27,6 +27,7 @@ Run the command from inside the target Git repository.
 }
 
 function repositoryRoot() {
+  if (process.env.HEPTAPOD_ROOT) return realpathSync(resolve(process.env.HEPTAPOD_ROOT));
   const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
     cwd: process.cwd(),
     encoding: "utf8",

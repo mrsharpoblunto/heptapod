@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
-import { lstatSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ const skillSource = join(packageRoot, "skills/heptapod");
 function run(repo, command) {
   return spawnSync(process.execPath, [installer, command], {
     cwd: repo,
+    env: { ...process.env, HEPTAPOD_ROOT: repo },
     encoding: "utf8",
   });
 }
@@ -20,8 +21,6 @@ function run(repo, command) {
 test("installs, reports, and safely removes both project skill links", () => {
   const repo = mkdtempSync(join(tmpdir(), "heptapod-skill-test-"));
   try {
-    execFileSync("git", ["init", "-q"], { cwd: repo });
-
     const installed = run(repo, "install");
     assert.equal(installed.status, 0, installed.stderr);
     const codex = join(repo, ".agents/skills/heptapod");
@@ -52,8 +51,7 @@ test("installs, reports, and safely removes both project skill links", () => {
 test("refuses to replace an existing skill", () => {
   const repo = mkdtempSync(join(tmpdir(), "heptapod-skill-collision-"));
   try {
-    execFileSync("git", ["init", "-q"], { cwd: repo });
-    execFileSync("mkdir", ["-p", join(repo, ".agents/skills/heptapod")]);
+    mkdirSync(join(repo, ".agents/skills/heptapod"), { recursive: true });
     const result = run(repo, "install");
     assert.equal(result.status, 1);
     assert.match(result.stderr, /refusing to replace existing Codex skill/);

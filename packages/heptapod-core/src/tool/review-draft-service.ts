@@ -30,7 +30,11 @@ export async function githubGraphql<T>(query: string, variables: Record<string, 
   return response.data;
 }
 
-export interface ReviewStorage { root?: string; databasePath?: string }
+export interface ReviewStorage {
+  root?: string;
+  databasePath?: string;
+  loadPatch?: (root: string, base: string, head: string) => Promise<string>;
+}
 
 export async function loadDraftState(reviewId: string, storage: ReviewStorage = {}): Promise<{ draft: ReviewDraft; preview: ReviewDraftPreview }> {
   const review = getReview(reviewId, storage.databasePath);
@@ -38,7 +42,10 @@ export async function loadDraftState(reviewId: string, storage: ReviewStorage = 
   const draft = getReviewDraft(reviewId, storage.databasePath);
   const { base, head } = review.payload.source;
   if (!/^[a-f\d]{40}$/i.test(base) || !/^[a-f\d]{40}$/i.test(head)) throw new Error("The review has invalid Git revisions.");
-  const patch = await execute("git", ["-C", storage.root ?? process.env.HEPTAPOD_ROOT ?? process.cwd(), "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--find-renames=50%", base, head, "--"]);
+  const root = storage.root ?? process.env.HEPTAPOD_ROOT ?? process.cwd();
+  const patch = storage.loadPatch
+    ? await storage.loadPatch(root, base, head)
+    : await execute("git", ["-C", root, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--find-renames=50%", base, head, "--"]);
   return { draft, preview: buildReviewDraftPreview(review.payload, draft, patch) };
 }
 

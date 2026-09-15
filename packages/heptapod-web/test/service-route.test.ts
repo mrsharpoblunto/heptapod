@@ -1,14 +1,27 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test, vi } from "vitest";
+
+const registry = vi.hoisted(() => ({ repositories: new Map<string, { id: string; root: string; name: string; createdAt: string; updatedAt: string }>() }));
+vi.mock("@thestraylight/heptapod-core/repositories", () => ({
+  registerRepository(root: string) {
+    const repository = { id: "0123456789abcdef", root, name: "example/repository", createdAt: "2026-09-15T00:00:00Z", updatedAt: "2026-09-15T00:00:00Z" };
+    registry.repositories.set(repository.id, repository);
+    return repository;
+  },
+  getRepository: (id: string) => registry.repositories.get(id) ?? null,
+  listRepositories: () => [...registry.repositories.values()],
+  removeRepository: (id: string) => registry.repositories.delete(id),
+  repositoryDatabasePath: (id: string) => `${registry.repositories.get(id)!.root}/reviews.sqlite`,
+}));
 import { DELETE, GET, POST, PUT } from "../app/api/service/[...path]/route";
 
 const directories: string[] = [];
 afterEach(() => {
   vi.unstubAllEnvs();
+  registry.repositories.clear();
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
@@ -24,7 +37,6 @@ function mutation(url: string, method: string, body?: unknown) {
 test("the website serves repository registration and versioned review ingestion on its own port", async () => {
   const state = mkdtempSync(join(tmpdir(), "heptapod-web-state-")); directories.push(state); vi.stubEnv("HEPTAPOD_STATE_DIR", state);
   const root = mkdtempSync(join(tmpdir(), "heptapod-web-repo-")); directories.push(root);
-  execFileSync("git", ["init", "-q", root]);
 
   const health = await GET(new Request("http://localhost:3000/api/service/health"), context("health"));
   assert.deepEqual(await health.json(), { ready: true, ingestionProtocolVersion: 1, reviewPayloadSchemaVersion: 1 });

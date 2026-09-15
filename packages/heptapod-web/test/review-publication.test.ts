@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test, vi } from "vitest";
@@ -13,17 +12,12 @@ afterEach(() => { vi.unstubAllEnvs(); directories.splice(0).forEach((directory) 
 
 function fixture() {
   const repo = mkdtempSync(join(tmpdir(), "heptapod-publication-")); directories.push(repo);
-  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
-  git("init", "-q"); git("config", "user.name", "Example"); git("config", "user.email", "test@example.com");
-  writeFileSync(join(repo, "example.test.ts"), "const value = 1;\n");
-  git("add", "."); git("commit", "-qm", "base"); const base = git("rev-parse", "HEAD");
-  writeFileSync(join(repo, "example.test.ts"), "const value = 2;\n");
-  git("add", "."); git("commit", "-qm", "head"); const head = git("rev-parse", "HEAD");
-  const patch = git("diff", base, head);
+  const base = "a".repeat(40), head = "b".repeat(40);
+  const patch = "diff --git a/example.test.ts b/example.test.ts\n--- a/example.test.ts\n+++ b/example.test.ts\n@@ -1 +1 @@\n-const value = 1;\n+const value = 2;\n";
   vi.stubEnv("HEPTAPOD_ROOT", repo); vi.stubEnv("HEPTAPOD_DB", join(repo, "reviews.sqlite"));
   const model: RenderModel = { title: "Review example", summary: "Example", source: { base, head, diff: "source.diff", stats: { additions: 1, deletions: 1, files: 1 },
     github: { number: 42, repositoryUrl: "https://github.com/example/project", pullRequestUrl: "https://github.com/example/project/pull/42" }, files: [{ path: "example.test.ts", status: "M" }] },
-    verification: { base, head, exact: true, tree: git("rev-parse", "HEAD^{tree}"), sourceBytes: patch.length, patchSteps: 1 },
+    verification: { base, head, exact: true, tree: "c".repeat(40), sourceBytes: patch.length, patchSteps: 1 },
     steps: [{ id: "test", number: 1, title: "Test behavior", kind: "tests", body: "Check behavior.", patch, stats: { additions: 1, deletions: 1, files: 1 }, checks: { automated: [], manual: [] },
       fileDiffs: [{ path: "example.test.ts", patch, beforeContent: "const value = 1;\n", afterContent: "const value = 2;\n" }] }],
   };
@@ -35,7 +29,7 @@ function fixture() {
   ];
   const initial = getReviewDraft("42");
   const draft = saveReviewDraft("42", initial.version, "Final thoughts", comments);
-  return { model, draft };
+  return { model, draft, storage: { loadPatch: async () => patch } };
 }
 
 function fakeGitHub(head: string, failOnce: boolean) {
@@ -63,9 +57,9 @@ function fakeGitHub(head: string, failOnce: boolean) {
 }
 
 test("publishes a pending review with file and line threads and never submits it", async () => {
-  const { model, draft } = fixture();
+  const { model, draft, storage } = fixture();
   const remote = fakeGitHub(model.source.head, false);
-  const result = await publishReviewDraft("42", draft.version, remote.graphql);
+  const result = await publishReviewDraft("42", draft.version, remote.graphql, storage);
   assert.ok(result.draft.publishedAt);
   assert.equal(result.draft.githubUrl, "https://github.com/example/project/pull/42/files");
   const create = remote.calls.find((call) => call.query.includes("addPullRequestReview(input"))!;
@@ -80,33 +74,33 @@ test("publishes a pending review with file and line threads and never submits it
   assert.equal(threads[1].input.side, "RIGHT");
   assert.ok(remote.calls.every((call) => !call.query.includes("submitPullRequestReview")));
   const count = remote.calls.length;
-  await publishReviewDraft("42", draft.version, remote.graphql);
+  await publishReviewDraft("42", draft.version, remote.graphql, storage);
   assert.equal(remote.calls.length, count);
 });
 
 test("retries partial publication without duplicating the pending review or completed comments", async () => {
-  const { model, draft } = fixture();
+  const { model, draft, storage } = fixture();
   const remote = fakeGitHub(model.source.head, true);
-  await assert.rejects(publishReviewDraft("42", draft.version, remote.graphql), /Network interrupted/);
+  await assert.rejects(publishReviewDraft("42", draft.version, remote.graphql, storage), /Network interrupted/);
   const saved = getReviewDraft("42");
   assert.equal(saved.githubReviewId, "REVIEW");
   assert.equal(saved.publishing, false);
   assert.equal(saved.publishedAt, null);
   assert.equal(saved.comments.length, 3);
-  await publishReviewDraft("42", draft.version, remote.graphql);
+  await publishReviewDraft("42", draft.version, remote.graphql, storage);
   assert.equal(remote.calls.filter((call) => call.query.includes("addPullRequestReview(input")).length, 1);
   assert.equal(remote.bodies.length, 2);
 });
 
 test("stops publication before mutations when the PR head or local draft changes", async () => {
-  const { draft } = fixture();
+  const { draft, storage } = fixture();
   const remote = fakeGitHub("c".repeat(40), false);
-  await assert.rejects(publishReviewDraft("42", draft.version, remote.graphql), /new commits/);
+  await assert.rejects(publishReviewDraft("42", draft.version, remote.graphql, storage), /new commits/);
   assert.ok(remote.calls.every((call) => call.query.startsWith("query")));
   assert.equal(getReviewDraft("42").publishing, false);
   saveReviewDraft("42", draft.version, "Edited in another tab", draft.comments);
-  await assert.rejects(publishReviewDraft("42", draft.version, remote.graphql), /changed in another tab/);
-  const state = await loadDraftState("42");
+  await assert.rejects(publishReviewDraft("42", draft.version, remote.graphql, storage), /changed in another tab/);
+  const state = await loadDraftState("42", storage);
   assert.match(state.preview.body, /Edited in another tab/);
 });
 
@@ -118,13 +112,13 @@ test("validates browser origins against the served host even when Next normalize
 });
 
 test("persists an edited combined summary and publishes it exactly once", async () => {
-  const { model, draft } = fixture();
+  const { model, draft, storage } = fixture();
   const edited = "## Test behavior\n\nOverall question\n\nMy final thoughts.";
   const saved = saveReviewDraft("42", draft.version, edited, draft.comments, undefined, true);
   assert.equal(getReviewDraft("42").summaryIsCombined, true);
-  assert.equal((await loadDraftState("42")).preview.body, edited);
+  assert.equal((await loadDraftState("42", storage)).preview.body, edited);
   const remote = fakeGitHub(model.source.head, false);
-  await publishReviewDraft("42", saved.version, remote.graphql);
+  await publishReviewDraft("42", saved.version, remote.graphql, storage);
   const create = remote.calls.find((call) => call.query.includes("addPullRequestReview(input"))!;
   assert.equal(String(create.input.body).split("<!--")[0].trim(), edited);
 });

@@ -136,7 +136,7 @@ export async function choosePullRequests(root: string): Promise<OpenPullRequest[
   try {
     repository = await connectedRepository(root);
     if (!repository.githubUrl) throw new Error("The current repository needs a GitHub origin before pull requests can be listed.");
-    firstPage = await loadPullRequestPage(repository.name, false, undefined, PAGE_SIZE);
+    firstPage = await loadPullRequestPage(repository.name, undefined, PAGE_SIZE);
   } catch (error) {
     stopLoading();
     closeScreen();
@@ -174,7 +174,7 @@ export async function choosePullRequests(root: string): Promise<OpenPullRequest[
     }, 80);
     redraw();
     try {
-      const page = await loadPullRequestPage(repository.name, false, cursor, PAGE_SIZE);
+      const page = await loadPullRequestPage(repository.name, cursor, PAGE_SIZE);
       const known = new Set(pullRequests.map((pullRequest) => pullRequest.number));
       const additions = page.pullRequests.filter((pullRequest) => !known.has(pullRequest.number));
       const previousLength = pullRequests.length;

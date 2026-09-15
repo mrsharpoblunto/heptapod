@@ -1,9 +1,9 @@
-import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "vitest";
+import { test, vi } from "vitest";
+vi.mock("../src/tool/generated-files.js", () => ({ generatedFiles: () => new Set<string>() }));
 import { getReview } from "../src/tool/database.js";
 import { ingestNarrative } from "../src/tool/ingest.js";
 import { loadManifest } from "../src/tool/manifest.js";
@@ -18,7 +18,6 @@ const patch = [
 
 function fixture(kind: "tests" | "implementation" | "refactor") {
   const root = mkdtempSync(join(tmpdir(), "heptapod-file-coverage-"));
-  execFileSync("git", ["init", "-q"], { cwd: root });
   writeFileSync(join(root, "step.diff"), patch);
   writeFileSync(join(root, "context.md"), "Context");
   const step: NarrativeStep = { id: "change", title: "Change behavior", kind, diff: "step.diff", checks: { automated: [], manual: [] } };
