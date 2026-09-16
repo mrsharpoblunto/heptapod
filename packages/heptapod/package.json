@@ -21,8 +21,7 @@
     "heptapod": "scripts/heptapod.mjs"
   },
   "files": [
-    "dist/tool/cli.js",
-    "dist/tool/cli.d.ts",
+    "dist",
     "scripts",
     "README.md",
     "LICENSE"
