@@ -11,6 +11,8 @@ The service defaults to port `49731`; `heptapod service configure --port <port>`
 
 For a locally linked development checkout, use `pnpm exec heptapod-web-dev --port 3000`. It runs the linked Next.js source with hot reload; `heptapod-web` serves the last production build.
 
+`pnpm typecheck` regenerates route types before checking TypeScript. Checks use `.next/types` and exclude `.next/dev` so cached development validators cannot reference routes removed since the last dev session.
+
 Next serves the UI and control API on the same port; API routes live under `/api/service`. Repository CLIs use them to register repositories and upload versioned review results. There is no API sidecar. Development builds core on startup; restart after changing its source.
 
 The homepage manages registered local repositories and streams an independent setup checklist for each one. Opening a repository lists its uploaded reviews. Capture, preparation, refresh, validation, tests, and ingestion remain repository-local and are not launched by the website.

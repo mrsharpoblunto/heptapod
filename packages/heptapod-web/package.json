@@ -46,7 +46,7 @@
     "dev": "node scripts/heptapod-web.mjs --dev",
     "start": "node scripts/heptapod-web.mjs",
     "build": "next build",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "next typegen && tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run build",
