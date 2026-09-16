@@ -1,5 +1,5 @@
 import type { AgentId } from "./agents.js";
-import { agentPreferences, readConfigFile } from "./config-file.js";
+import { agentPreferences, diffConfig, readConfigFile, type HeptapodDiffConfig } from "./config-file.js";
 import { fixtureAdapters, type FixtureFormat } from "./test-fixtures/index.js";
 import { runnerAdapters, type RunnerFormat } from "./test-runners/index.js";
 
@@ -15,7 +15,7 @@ export interface HeptapodTestRunnerConfig extends HeptapodCommandConfig {
 
 export interface HeptapodConfig {
   agents?: { preferenceOrder?: AgentId[] };
-  diff?: { engine?: "difftastic" | "standard"; executable?: string; timeoutMs?: number };
+  diff?: HeptapodDiffConfig;
   test?: {
     prerequisites?: HeptapodCommandConfig[];
     build?: HeptapodCommandConfig[];
@@ -40,12 +40,7 @@ export function loadHeptapodConfig(repo: string): HeptapodConfig | null {
   if (!value) return null;
   agentPreferences(value);
   const config = value as HeptapodConfig;
-  if (config.diff !== undefined) {
-    if (!config.diff || typeof config.diff !== "object" || Array.isArray(config.diff)) throw new Error("Invalid .heptapod.json: diff must be an object.");
-    if (config.diff.engine !== undefined && config.diff.engine !== "difftastic" && config.diff.engine !== "standard") throw new Error("Invalid .heptapod.json: diff.engine must be difftastic or standard.");
-    if (config.diff.executable !== undefined && (typeof config.diff.executable !== "string" || !config.diff.executable.trim())) throw new Error("Invalid .heptapod.json: diff.executable must be a non-empty executable path.");
-    if (config.diff.timeoutMs !== undefined && (!Number.isSafeInteger(config.diff.timeoutMs) || config.diff.timeoutMs <= 0)) throw new Error("Invalid .heptapod.json: diff.timeoutMs must be a positive integer.");
-  }
+  diffConfig(value);
   if (config.test !== undefined) {
     if (!config.test || typeof config.test !== "object" || Array.isArray(config.test)) throw new Error("Invalid .heptapod.json: test must be an object.");
     for (const field of ["prerequisites", "build"] as const) {

@@ -13,6 +13,7 @@
     "test": "pnpm --recursive test",
     "check": "pnpm --recursive check",
     "pack:check": "pnpm --filter @thestraylight/heptapod-core pack --dry-run && pnpm --filter @thestraylight/heptapod pack --dry-run && pnpm --filter @thestraylight/heptapod-web pack --dry-run && pnpm --filter @thestraylight/heptapod-skill pack --dry-run",
+    "install:check": "node scripts/install-check.mjs",
     "release": "node scripts/release.mjs",
     "prepare": "husky"
   },

@@ -38,6 +38,12 @@ pnpm exec heptapod-skill install
 pnpm exec heptapod repo add
 ```
 
+If the repository replaces npm's default registry, route the public Heptapod scope explicitly in that repository's `.npmrc`:
+
+```ini
+@thestraylight:registry=https://registry.npmjs.org/
+```
+
 Narrative artifacts remain repository-local under `node_modules/.cache/heptapod/runs`. The CLI performs validation, tests, and structural diff generation in the repository, then uploads a versioned review payload to the global site. The site keeps repositories isolated even when they use the same pull-request numbers.
 
 ## Publishing
@@ -51,7 +57,7 @@ pnpm release -- minor --dry-run
 pnpm release -- minor
 ```
 
-The release script accepts only `patch`, `minor`, or `major`; it derives the version from npm rather than trusting a manually supplied number. With no existing releases, `minor` produces the initial `0.1.0`. Before building, the script compares all four package histories, rejects inconsistent or unsafe version states, and automatically resumes a partially completed release when the requested bump identifies it unambiguously. It then requires a clean worktree, confirms interactively, runs the full checks, updates every package version, dry-packs each package, and publishes core, web, CLI, then the skill package. Immediately before publishing it asks for one npm OTP and reuses it for every package; `--otp <code>` and `NPM_CONFIG_OTP` skip that prompt. CI can pass `--yes`; alternate distribution tags can use `--tag next`.
+The release script accepts only `patch`, `minor`, or `major`; it derives the version from npm rather than trusting a manually supplied number. With no existing releases, `minor` produces the initial `0.1.0`. Before building, the script compares all four package histories, rejects inconsistent or unsafe version states, and automatically resumes a partially completed release when the requested bump identifies it unambiguously. It then requires a clean worktree, confirms interactively, runs the full checks, updates every package version, dry-packs each package, and verifies that the resulting tarballs install through both npm and pnpm before publishing core, web, CLI, then the skill package. Immediately before publishing it asks for one npm OTP and reuses it for every package; `--otp <code>` and `NPM_CONFIG_OTP` skip that prompt. CI can pass `--yes`; alternate distribution tags can use `--tag next`.
 
 The skill installer creates project-local links for both agents: `.agents/skills/heptapod` for Codex and `.claude/skills/heptapod` for Claude. It refuses to overwrite unrelated files; `pnpm exec heptapod-skill uninstall` removes only links owned by the installed package.
 

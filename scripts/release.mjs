@@ -197,6 +197,7 @@ async function main() {
   if (options.dryRun) {
     run("pnpm", ["check"]);
     run("pnpm", ["pack:check"]);
+    run("pnpm", ["install:check"]);
     process.stdout.write(`Dry run complete. No versions were changed and nothing was published.\n`);
     return;
   }
@@ -212,6 +213,7 @@ async function main() {
   run("pnpm", ["check"]);
   if (version !== current) writeVersions(version);
   run("pnpm", ["pack:check"]);
+  run("pnpm", ["install:check"]);
   const otp = await releaseOtp(options.otp);
   for (const name of publishOrder) {
     if (!unpublished.includes(name)) continue;

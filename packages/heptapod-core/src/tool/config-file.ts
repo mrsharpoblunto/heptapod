@@ -2,6 +2,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentId } from "./agents.js";
 
+export interface HeptapodDiffConfig {
+  engine?: "difftastic" | "standard";
+  executable?: string;
+  timeoutMs?: number;
+}
+
 export function readConfigFile(repo: string): Record<string, unknown> | null {
   const path = join(repo, ".heptapod.json");
   if (!existsSync(path)) return null;
@@ -26,4 +32,23 @@ export function agentPreferences(value: Record<string, unknown> | null): AgentId
     }
   }
   return config.agents?.preferenceOrder ?? [];
+}
+
+export function diffConfig(value: Record<string, unknown> | null): HeptapodDiffConfig | undefined {
+  const diff = value?.diff;
+  if (diff === undefined) return undefined;
+  if (!diff || typeof diff !== "object" || Array.isArray(diff)) {
+    throw new Error("Invalid .heptapod.json: diff must be an object.");
+  }
+  const config = diff as HeptapodDiffConfig;
+  if (config.engine !== undefined && config.engine !== "difftastic" && config.engine !== "standard") {
+    throw new Error("Invalid .heptapod.json: diff.engine must be difftastic or standard.");
+  }
+  if (config.executable !== undefined && (typeof config.executable !== "string" || !config.executable.trim())) {
+    throw new Error("Invalid .heptapod.json: diff.executable must be a non-empty executable path.");
+  }
+  if (config.timeoutMs !== undefined && (!Number.isSafeInteger(config.timeoutMs) || config.timeoutMs <= 0)) {
+    throw new Error("Invalid .heptapod.json: diff.timeoutMs must be a positive integer.");
+  }
+  return config;
 }
