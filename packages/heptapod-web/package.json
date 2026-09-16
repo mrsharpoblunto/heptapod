@@ -1,6 +1,6 @@
 {
   "name": "@thestraylight/heptapod-web",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Next.js viewer for Heptapod narrative code reviews.",
   "license": "MIT",
   "type": "module",
