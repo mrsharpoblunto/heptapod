@@ -1,6 +1,6 @@
 {
   "name": "@thestraylight/heptapod-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
   "type": "module",
   "description": "Shared capture, validation, ingestion, and agent preparation APIs for Heptapod.",

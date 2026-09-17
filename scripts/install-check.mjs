@@ -144,7 +144,12 @@ try {
     if (manager === "npm") {
       run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", `--registry=${registry}`, ...archivePaths], consumer);
     } else {
-      run("pnpm", ["add", "--ignore-scripts", `--registry=${registry}`, ...archivePaths], consumer);
+      // pnpm resolves transitive semver dependencies independently of root tarballs.
+      // Redirect only the validated release ranges to the unpublished archives.
+      const overrides = packed.map(({ archive, manifest }) =>
+        `  ${JSON.stringify(`${manifest.name}@^${manifest.version}`)}: ${JSON.stringify(`file:${archive}`)}`);
+      writeFileSync(join(consumer, "pnpm-workspace.yaml"), `overrides:\n${overrides.join("\n")}\n`);
+      run("pnpm", ["add", "--workspace-root", "--ignore-scripts", `--registry=${registry}`, ...archivePaths], consumer);
     }
     await assertInstalled(consumer, version);
     process.stdout.write(`${manager} install check passed for Heptapod ${version}.\n`);

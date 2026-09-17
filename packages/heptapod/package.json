@@ -1,6 +1,6 @@
 {
   "name": "@thestraylight/heptapod",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "MIT",
   "type": "module",
   "description": "Build and validate narrative walkthroughs from large Git diffs.",
