@@ -8,6 +8,8 @@ pnpm exec heptapod validate --id 12315
 pnpm exec heptapod ingest --pr 12315
 ```
 
+`heptapod view` opens the running web UI in your default browser, from any directory. Use `heptapod view --repo` for the current repository, `--repo <path|name|id>` for another registered repository, or `--pr <number>` for a PR review in the selected or current repository. For example, `heptapod view --repo ../my-repo --pr 42` opens that repository's review of PR 42. Use `--service-port 3000` to target a development site. Register repositories with `heptapod repo add` and prepare or ingest reviews before viewing them.
+
 Use `--rev '<base>...<target>'` instead of `--pr` for a branch comparison. Heptapod resolves the repository root with Git. Each narrative workspace stays at `node_modules/.cache/heptapod/runs/<review-id>`; the central site stores its own repository-scoped copy of the finished review payload.
 
 During ingestion, Heptapod creates a temporary worktree at the pinned base and applies each step in order. Intermediate steps run only the changed test fixtures introduced so far; the final step runs the complete suite. It records observed results, expectation mismatches, raw output, and failures not represented by the authored expectations, then removes the worktree.

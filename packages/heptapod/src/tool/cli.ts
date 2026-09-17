@@ -9,6 +9,7 @@ import { repositoryRoot } from "@thestraylight/heptapod-core/git";
 import { apiUrl, ensureRemoteRepository, listRemoteRepositories, removeRemoteRepository, uploadReview } from "./client.js";
 import { choosePullRequests, createIngestionProgress } from "./tui.js";
 import { configureService, installService, runService, serviceStatus, startService, stopService } from "./service.js";
+import { openBrowser, viewUrl } from "./view.js";
 
 type OutputMode = "human" | "ndjson";
 interface ParsedArguments { command?: string; action?: string; options: Record<string, string> }
@@ -18,6 +19,7 @@ function usage(): string {
 
 Usage:
   heptapod [--service-port <port>] Select pull requests in an interactive terminal.
+  heptapod view [--repo [<path|name|id>]] [--pr <number>]
   heptapod capture --pr <number>
   heptapod capture --rev <base>...<target>
   heptapod prepare --pr <number> --agent <codex|claude>
@@ -34,6 +36,8 @@ Usage:
 The service port is stored in the per-user Heptapod config. Use --service-port for a one-command override
 (for example, --service-port 3000 connects to a development site and its same-origin API).
 HEPTAPOD_API_URL remains available as a direct API override.
+View opens the homepage by default. --repo opens the current repository when no value is supplied;
+--pr opens a review in the selected repository, or the current repository when --repo is omitted.
 Run artifacts remain in the target repository.
 `;
 }
@@ -47,6 +51,10 @@ function parseArguments(argv: string[]): ParsedArguments {
     const token = tokens[index];
     if (!token?.startsWith("--")) throw new Error(`Unexpected argument: ${token}`);
     const key = token.slice(2);
+    if (command === "view" && key === "repo" && (!tokens[index + 1] || tokens[index + 1].startsWith("--"))) {
+      options.repo = ".";
+      continue;
+    }
     const value = tokens[++index];
     if (!value || value.startsWith("--")) throw new Error(`Missing value for ${token}`);
     options[key] = value;
@@ -125,6 +133,15 @@ async function main(): Promise<void> {
   const mode = outputMode(parsed.options);
   const jobId = randomUUID();
   const report = reporter(mode, jobId, parsed.options.pr);
+
+  if (parsed.command === "view") {
+    for (const key of Object.keys(parsed.options)) {
+      if (!["repo", "pr", "api-url", "service-port", "output"].includes(key)) throw new Error(`Unknown view option: --${key}`);
+    }
+    const url = await viewUrl(apiUrl(parsed.options["api-url"], parsed.options["service-port"]), parsed.options.repo, parsed.options.pr);
+    openBrowser(url);
+    printResult("Opened Heptapod in your browser.", { url }, mode, report); return;
+  }
 
   if (parsed.command === "service") {
     const configured = parsed.options.port ? configureService(Number(parsed.options.port)) : null;

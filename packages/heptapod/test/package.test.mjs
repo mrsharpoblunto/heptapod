@@ -31,6 +31,7 @@ test("the published CLI starts using only its packaged runtime files", () => {
     assert.ifError(result.error);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Usage:/);
+    assert.match(result.stdout, /heptapod view/);
     assert.match(result.stdout, /heptapod service install/);
   } finally {
     rmSync(temporary, { recursive: true, force: true });

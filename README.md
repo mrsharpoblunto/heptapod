@@ -30,6 +30,19 @@ heptapod service install
 
 The service uses port `49731` by default. Change it for the current user with `heptapod service configure --port <port>`; the configuration is shared automatically with every repository CLI.
 
+Open the running site in your default browser with `heptapod view`:
+
+```sh
+heptapod view                           # Homepage, from any directory
+heptapod view --repo                    # Current repository
+heptapod view --repo owner/repository   # Registered repository name (or path or ID)
+heptapod view --pr 12315                 # PR review in the current repository
+heptapod view --repo ../my-repo --pr 42  # PR review in another repository
+heptapod view --service-port 3000        # Development site
+```
+
+Repository pages require registration with the selected service (`heptapod repo add`). `view` opens existing review pages; prepare or ingest a PR first to make its review available.
+
 Install the CLI and skill in each Git repository you want to review. Run repository commands from anywhere inside that repository; Heptapod resolves its Git root automatically.
 
 ```sh
