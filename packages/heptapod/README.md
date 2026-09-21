@@ -2,6 +2,8 @@
 
 The repository-local Heptapod CLI. Install it in the Git repository being reviewed, then run it from within that repository. It captures a comparison, validates an exact narrative patch stack, runs tests and structural diffs, retains run artifacts locally, and uploads the finished review to the global Heptapod site.
 
+`heptapod service install` installs and starts a login service: a LaunchAgent on macOS or a systemd user service on Linux. Run it as your normal user, without sudo. Linux requires systemd with a running user manager; the unit is saved at `$XDG_CONFIG_HOME/systemd/user/heptapod.service` (default: `~/.config/systemd/user/heptapod.service`). Use `heptapod service status`, `stop`, and `start` to manage it, and `journalctl --user -u heptapod.service -f` to follow Linux service logs. Re-run installation after upgrading Node or moving the installation to update its saved executable paths and environment. On systems without systemd, use `heptapod service run` with your service manager.
+
 ```sh
 pnpm exec heptapod capture --pr 12315
 pnpm exec heptapod validate --id 12315

@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveHeptapodStateDirectory } from "@thestraylight/heptapod-core/repositories";
 import { resolveServiceConfigPath, serviceApiUrl, serviceWebUrl, writeServiceConfig } from "@thestraylight/heptapod-core/service-config";
@@ -31,8 +31,30 @@ function launchdPid(): number | null {
   return match ? Number(match[1]) : null;
 }
 
+const systemdUnit = "heptapod.service";
+
+function systemdPath(): string {
+  const config = process.env.XDG_CONFIG_HOME;
+  return join(config && isAbsolute(config) ? config : join(homedir(), ".config"), "systemd", "user", systemdUnit);
+}
+
+function systemctl(...args: string[]): void {
+  const result = spawnSync("systemctl", ["--user", ...args], { encoding: "utf8" });
+  if (result.status !== 0) {
+    const detail = result.error?.message ?? result.stderr?.trim();
+    throw new Error(`systemctl --user ${args.join(" ")} failed${detail ? `: ${detail}` : "."} Linux service installation requires systemd and a running user manager. Use \`heptapod service run\` otherwise.`);
+  }
+}
+
+function systemdPid(): number | null {
+  if (process.platform !== "linux") return null;
+  const result = spawnSync("systemctl", ["--user", "show", systemdUnit, "--property=MainPID", "--value"], { encoding: "utf8" });
+  const pid = result.status === 0 ? Number(result.stdout.trim()) : 0;
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+}
+
 export async function serviceStatus(base = apiUrl()): Promise<{ running: boolean; pid: number | null; url: string }> {
-  const pid = recordedPid() ?? launchdPid();
+  const pid = recordedPid() ?? launchdPid() ?? systemdPid();
   try { await checkService(base); return { running: true, pid, url: base }; }
   catch { return { running: false, pid, url: base }; }
 }
@@ -55,6 +77,15 @@ export async function startService(base = apiUrl()): Promise<{ running: true; pi
   const current = await serviceStatus(base);
   if (current.running) return { running: true, pid: current.pid ?? 0, url: base };
   const { state, pid, log } = files();
+  if (process.platform === "linux" && existsSync(systemdPath())) {
+    systemctl("start", systemdUnit);
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const status = await serviceStatus(base);
+      if (status.running) return { running: true, pid: status.pid ?? 0, url: base };
+    }
+    throw new Error(`Heptapod did not start. Inspect \`journalctl --user -u ${systemdUnit}\`.`);
+  }
   mkdirSync(state, { recursive: true });
   const descriptor = openSync(log, "a");
   const child = spawn(process.execPath, [launcher()], { detached: true, stdio: ["ignore", descriptor, descriptor], env: process.env });
@@ -71,6 +102,11 @@ export async function startService(base = apiUrl()): Promise<{ running: true; pi
 
 export function stopService(): boolean {
   const { pid } = files();
+  if (process.platform === "linux" && existsSync(systemdPath())) {
+    systemctl("stop", systemdUnit);
+    if (existsSync(pid)) unlinkSync(pid);
+    return true;
+  }
   if (process.platform === "darwin") {
     const stopped = spawnSync("launchctl", ["bootout", `gui/${process.getuid?.()}/com.thestraylight.heptapod`], { encoding: "utf8" });
     if (stopped.status === 0) { if (existsSync(pid)) unlinkSync(pid); return true; }
@@ -86,8 +122,44 @@ function xml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
+function systemdQuote(value: string): string {
+  // Unit values use C-style escaping and expand % specifiers, even inside quotes.
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\n", "\\n").replaceAll("\r", "\\r").replaceAll("\t", "\\t").replaceAll("%", "%%")}"`;
+}
+
+function installSystemdService(): string {
+  const path = systemdPath();
+  const { state } = files();
+  mkdirSync(dirname(path), { recursive: true });
+  mkdirSync(state, { recursive: true });
+  // The ':' executable prefix disables $ expansion in the command's paths.
+  const command = [`:${process.execPath}`, launcher()].map(systemdQuote).join(" ");
+  writeFileSync(path, `[Unit]
+Description=Heptapod review service
+
+[Service]
+Type=simple
+ExecStart=${command}
+Environment=${systemdQuote(`PATH=${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`)}
+Environment=${systemdQuote(`HEPTAPOD_STATE_DIR=${state}`)}
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+`, { mode: 0o600 });
+  systemctl("daemon-reload");
+  systemctl("enable", systemdUnit);
+  // Restart also applies updated paths and environment when installing again.
+  systemctl("restart", systemdUnit);
+  return path;
+}
+
 export function installService(): string {
-  if (process.platform !== "darwin") throw new Error("Automatic service installation currently supports macOS. Use `heptapod service run` with your user service manager.");
+  if (process.platform === "linux") return installSystemdService();
+  if (process.platform !== "darwin") throw new Error("Automatic service installation supports macOS and Linux with systemd. Use `heptapod service run` with your user service manager.");
   const path = join(homedir(), "Library", "LaunchAgents", "com.thestraylight.heptapod.plist");
   mkdirSync(dirname(path), { recursive: true });
   const serviceFiles = files();

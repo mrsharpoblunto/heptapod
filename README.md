@@ -30,6 +30,8 @@ heptapod service install
 
 The service uses port `49731` by default. Change it for the current user with `heptapod service configure --port <port>`; the configuration is shared automatically with every repository CLI.
 
+`service install` supports macOS (launchd) and Linux (systemd). Run it as your normal user, without sudo. On Linux it writes `~/.config/systemd/user/heptapod.service` (or uses `$XDG_CONFIG_HOME`), enables startup at login, and starts the service immediately. Use `heptapod service status`, `stop`, and `start` to manage it; Linux logs are available with `journalctl --user -u heptapod.service -f`. Re-run `service install` after upgrading Node or moving the installation so the saved paths and environment are refreshed. Linux installations require a running systemd user manager; for other service managers, run `heptapod service run` in the foreground.
+
 Open the running site in your default browser with `heptapod view`:
 
 ```sh
