@@ -615,3 +615,30 @@ test("the root repository menu exposes folder-picker, remove, checklist, and rep
   assert.match(markup, /Status OK/);
   assert.match(markup, /aria-label="Remove repository example\/project"/);
 });
+
+test("agent suite-only results are visible without inventing per-fixture passes", () => {
+  const step = { ...data.steps[0], testRun: {
+    command: "pnpm test", scope: "full-suite" as const, files: [], status: "passing" as const,
+    expectedStatus: "passing" as const, expectationMatched: true, exitCode: 0, durationMs: 10,
+    expectedFailures: [], observedFailures: [], unexpectedFailures: [], fixtureRuns: [], output: "Suite completed",
+  } };
+  const html = renderToStaticMarkup(createElement(ReviewViewer, { data: { ...data, steps: [step] }, updatedAt: "2026-09-12" }));
+  assert.match(html, /pnpm test/);
+  assert.match(html, /Suite completed/);
+  assert.doesNotMatch(html, /No test fixtures run at this point/);
+});
+
+test("metadata result blockers and expectation mismatches remain visible", () => {
+  const step = { ...data.steps[0], testRun: {
+    command: null, scope: "full-suite" as const, files: [], status: "not-run" as const,
+    expectedStatus: "passing" as const, expectationMatched: null, exitCode: null, durationMs: 0,
+    expectedFailures: [], observedFailures: [], unexpectedFailures: [], fixtureRuns: [], output: "",
+    metadataResults: [
+      { target: "automated/0", label: "Type checking", status: "not-run" as const, results: [], detail: "Compiler unavailable", expectationMatched: null },
+      { target: "test/test.js/0", label: "Retry behavior", status: "failing" as const, results: [{ report: "unit", tests: [0] }], expectationMatched: false },
+    ],
+  } };
+  const html = renderToStaticMarkup(createElement(ReviewViewer, { data: { ...data, steps: [step] }, updatedAt: "2026-09-12" }));
+  assert.match(html, /Metadata results/); assert.match(html, /Compiler unavailable/);
+  assert.match(html, /Retry behavior/); assert.match(html, /differs from the expected result/);
+});

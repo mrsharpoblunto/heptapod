@@ -9,7 +9,7 @@ import { collectGitHubEvidence } from "./github.js";
 import { loadManifest } from "./manifest.js";
 import { buildReviewModel } from "./model.js";
 import { analyzeNarrative } from "./test-analysis.js";
-import { executeNarrativeTests } from "./test-execution.js";
+import { loadTestEvidence } from "./test-evidence.js";
 import { buildReviewUrl } from "./url.js";
 import { verifyNarrative } from "./verify.js";
 import { buildEditorLinks } from "./source-checkout.js";
@@ -53,7 +53,8 @@ export function ingestNarrative({
     const verification = verifyNarrative(repo, manifest, manifestPath, generated);
     progress("Analyzing changed files and test cases");
     const analysis = analyzeNarrative(repo, manifest, manifestPath, generated);
-    const testExecution = executeNarrativeTests(repo, manifest, manifestPath, progress, analysis.testAreasByStep);
+    progress("Validating agent-submitted test evidence");
+    const testExecution = loadTestEvidence(manifest, manifestPath, verification, analysis.testFixturesByStep);
     progress("Collecting pull-request evidence");
     const manualEvidence = collectRemoteEvidence ? collectGitHubEvidence(manifest.source.github) : [];
     progress("Building the review payload");

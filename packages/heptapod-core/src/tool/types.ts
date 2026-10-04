@@ -144,6 +144,8 @@ export interface VerificationResult {
   sourceBytes: number;
   patchSteps: number;
   exact: true;
+  /** Reconstructed tree after each step, used to bind agent test evidence. */
+  stepTrees?: Record<string, string>;
   /** Snapshot of the Git attribute exclusions used to validate and render this review. */
   generatedFiles?: string[];
 }
@@ -151,7 +153,17 @@ export interface VerificationResult {
 export type ObservedTestStatus = "passing" | "failing" | "timed-out" | "not-run";
 export type ExpectedTestStatus = "passing" | "failing" | "not-specified";
 
+export interface MetadataTestResult {
+  target: string;
+  label: string;
+  status: ObservedTestStatus | "not-applicable";
+  results: Array<{ report: string; tests?: number[] }>;
+  detail?: string;
+  expectationMatched: boolean | null;
+}
+
 export interface StepTestRun {
+  metadataResults?: MetadataTestResult[];
   command: string | null;
   scope: "changed-tests" | "full-suite";
   files: string[];
@@ -183,6 +195,7 @@ export interface TestFixtureRun {
 }
 
 export interface TestExecutionMetadata {
+  source?: "agent";
   command: string | null;
   worktreeBase: string;
   timeoutMs: number;

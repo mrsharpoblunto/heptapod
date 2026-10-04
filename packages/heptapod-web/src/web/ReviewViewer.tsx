@@ -782,8 +782,11 @@ function TestFixtureResult({
   return testName ? content : <CommentAnchor target={{ kind: "file", stepId: stepId ?? review?.step.id ?? "", anchor: `fixture:${run.file}`, path: run.file }}>{content}</CommentAnchor>;
 }
 
-function additionalTestFailures(run: StepTestRun | undefined, fixtures: TestFixtureRun[]): Array<{ name: string; run: TestFixtureRun }> {
-  if (!run || (run.status !== "failing" && run.status !== "timed-out")) return [];
+function additionalTestResults(run: StepTestRun | undefined, fixtures: TestFixtureRun[]): Array<{ name: string; run: TestFixtureRun }> {
+  if (!run) return [];
+  // Agent evidence may contain a suite result without per-fixture reporter data.
+  if (!fixtures.length) return [{ name: run.command || "Tests not run", run: { ...run, command: run.command ?? "", file: "" } }];
+  if (run.status !== "failing" && run.status !== "timed-out") return [];
   const listed = new Set(fixtures.flatMap(fixture => fixture.observedFailures));
   const failures = [...new Set(run.observedFailures)].filter(failure => !listed.has(failure));
   if (!failures.length && !fixtures.length) return [{ name: run.command || "Test command", run: { ...run, command: run.command ?? "", file: "" } }];
@@ -815,12 +818,12 @@ function Checks({
   onSelectFile: (file: string) => void;
 }): ReactNode {
   const { steps } = useContext(ReviewRuntimeContext);
-  const additional = additionalTestFailures(step.testRun, fixtureRuns);
+  const additional = additionalTestResults(step.testRun, fixtureRuns);
   return <div className="checks">
     <section className="check-group test-results">
       <div className="test-summary-heading">
         <div className="eyebrow">Tests</div>
-        <span className="test-summary-count">{`${fixtureRuns.filter((run) => run.status === "passing").length}/${fixtureRuns.length + additional.length} passing`}</span>
+        <span className="test-summary-count">{`${fixtureRuns.filter((run) => run.status === "passing").length + additional.filter(({ run }) => run.status === "passing").length}/${fixtureRuns.length + additional.length} passing`}</span>
       </div>
       {fixtureRuns.length + additional.length === 0
         ? <p className="muted compact-copy">No test fixtures run at this point.</p>
@@ -833,6 +836,14 @@ function Checks({
           run={run}
         />)}</div>}
     </section>
+    {step.testRun?.metadataResults && step.testRun.metadataResults.length > 0 && <details className="check-group">
+      <summary>Metadata results ({step.testRun.metadataResults.length} entries; {step.testRun.metadataResults.filter(result => result.status === "not-run").length} not run)</summary>
+      <ul>{step.testRun.metadataResults.map(result => <li key={result.target}>
+        <strong>{result.label}</strong>: {result.status}
+        {result.expectationMatched === false && " — differs from the expected result"}
+        {result.detail && <p className="muted compact-copy">{result.detail}</p>}
+      </li>)}</ul>
+    </details>}
     <ManualTestList steps={steps} stepIndex={steps.findIndex(item => item.id === step.id)} />
   </div>;
 }
@@ -1208,7 +1219,7 @@ function ReviewSummaryRail({ onSelectFile }: { onSelectFile: (path: string, step
   const changedTestFiles = [...new Map(changedTests.map((test) => [test.path, test])).values()];
   const latestRuns = context.model.steps.slice().reverse().flatMap((step) => step.testRun?.fixtureRuns ?? []);
   const finalRun = context.model.steps.at(-1)?.testRun;
-  const additional = additionalTestFailures(finalRun, finalRun?.fixtureRuns ?? []);
+  const additional = additionalTestResults(finalRun, finalRun?.fixtureRuns ?? []);
   return <div className="review-summary-lists">
     <section><h3 className="eyebrow">{commentedFiles.length} {commentedFiles.length === 1 ? "file" : "files"} commented on</h3>
       <ul className="file-pills">{commentedFiles.map((file) => <li key={file.path}><FileLink file={file.path} active={false} onSelect={(path) => onSelectFile(path, file.stepId)} /></li>)}</ul>

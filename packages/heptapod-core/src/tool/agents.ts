@@ -34,5 +34,5 @@ export async function detectAgents(root: string): Promise<AgentStatus[]> {
 export function agentArguments(id: AgentId, prompt: string, metadataDirectory: string): string[] {
   return id === "codex"
     ? ["exec", "--sandbox", "workspace-write", "--add-dir", metadataDirectory, prompt]
-    : ["--print", "--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Glob,Grep,Bash(git diff *),Bash(git show *),Bash(git check-attr *),Bash(gh api *),Bash(pnpm exec heptapod validate *)", "--", prompt];
+    : ["--print", "--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Glob,Grep,Bash", "--", prompt];
 }

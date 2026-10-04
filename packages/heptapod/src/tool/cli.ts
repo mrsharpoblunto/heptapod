@@ -23,6 +23,7 @@ Usage:
   heptapod capture --pr <number>
   heptapod capture --rev <base>...<target>
   heptapod prepare --pr <number> --agent <codex|claude>
+  heptapod diagram --input <scene.excalidraw> --svg <diagram.svg>
   heptapod validate --id <review-id>
   heptapod ingest --pr <number> [--output ndjson] [--service-port <web-port>]
   heptapod ingest --rev <base>...<target> [--output ndjson] [--service-port <web-port>]
@@ -38,7 +39,8 @@ The service port is stored in the per-user Heptapod config. Use --service-port f
 HEPTAPOD_API_URL remains available as a direct API override.
 View opens the homepage by default. --repo opens the current repository when no value is supplied;
 --pr opens a review in the selected repository, or the current repository when --repo is omitted.
-Run artifacts remain in the target repository.
+Run artifacts remain in the target repository. Ingestion requires agent-written test-results.json; it never runs tests.
+Use ingest --publish false to store a review locally without uploading.
 `;
 }
 
@@ -134,6 +136,12 @@ async function main(): Promise<void> {
   const jobId = randomUUID();
   const report = reporter(mode, jobId, parsed.options.pr);
 
+  if (parsed.command === "diagram") {
+    const { exportDiagram } = await import("./diagram.js");
+    const result = await exportDiagram(required(parsed.options, "input"), required(parsed.options, "svg"));
+    printResult("Excalidraw SVG exported.", result, mode, report); return;
+  }
+
   if (parsed.command === "view") {
     for (const key of Object.keys(parsed.options)) {
       if (!["repo", "pr", "api-url", "service-port", "output"].includes(key)) throw new Error(`Unknown view option: --${key}`);
@@ -211,10 +219,15 @@ async function main(): Promise<void> {
   } else if (parsed.command === "ingest") {
     const base = apiUrl(parsed.options["api-url"], parsed.options["service-port"]);
     report("stage.started", { stage: "ingest", message: "Starting repository-local ingestion" });
+    if (parsed.options.publish !== undefined && !["true", "false"].includes(parsed.options.publish)) throw new Error("--publish must be true or false");
     const review = ingestReview(repo, parsed.options, {
       narrativePath: parsed.options.narrative,
       onProgress: (message) => report("stage.progress", { stage: "ingest", message }),
     });
+    if (parsed.options.publish === "false") {
+      printResult("Review validated and ingested locally.", { id: review.id, base: review.baseRevision, head: review.headRevision }, mode, report);
+      return;
+    }
     const uploaded = await publish(repo, review, base, report);
     if (mode === "ndjson") report("review.completed", { url: uploaded.url, result: { id: review.id, base: review.baseRevision, head: review.headRevision, database: resolveDatabasePath() } });
     else printResult("Exact reconstruction verified and review uploaded.", {
