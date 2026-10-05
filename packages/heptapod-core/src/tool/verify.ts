@@ -55,10 +55,14 @@ export function verifyNarrative(
   }
 
   return withTemporaryIndex(repo, base, ({ env }) => {
-    for (const [index, step] of patchSteps.entries()) {
-      const patch = readArtifact(manifestPath, step.diff);
-      if (patch.length === 0) throw new Error(`Step patch ${step.diff} is empty.`);
-      applyPatchToIndex(repo, env, patch, `${index + 1} (${step.id})`);
+    const stepTrees: Record<string, string> = {};
+    for (const [index, step] of manifest.steps.entries()) {
+      if (step.diff) {
+        const patch = readArtifact(manifestPath, step.diff);
+        if (patch.length === 0) throw new Error(`Step patch ${step.diff} is empty.`);
+        applyPatchToIndex(repo, env, patch, `${index + 1} (${step.id})`);
+      }
+      Object.defineProperty(stepTrees, step.id, { value: stagedTree(repo, env), enumerable: true });
     }
 
     const actualTree = stagedTree(repo, env);
@@ -79,6 +83,7 @@ export function verifyNarrative(
       sourceBytes: source.length,
       patchSteps: patchSteps.length,
       exact: true,
+      stepTrees,
       generatedFiles: [...generated].sort(),
     };
   });

@@ -232,3 +232,9 @@ Generated changes remain in `source.diff` and the sequential step patches for ex
 - Implementation sections partition the files exactly once. A file may serve multiple test areas or interfaces when relevant. For renames, reference the destination path; for deletions, reference the deleted path.
 - It is acceptable for intermediate content to be absent from the final tree, but avoid invented churn that does not improve the explanation.
 - Do not edit `source.diff` to make validation pass. Repair the step patches or narrative decomposition.
+
+## Test evidence and visual references
+
+Before ingestion, write `test-results.json` and logs as described in [test-evidence.md](test-evidence.md). The agent runs all tests; ingestion validates reported evidence against reconstructed step trees without executing tests. Older narratives need this evidence before re-ingestion.
+
+Most substantive steps should include an Excalidraw visual explaining architecture, sequences, entity relationships, or algorithms. See [visuals.md](visuals.md) for the wrapped CLI export and scene example. Link local SVGs from the step body so ingestion embeds them in the review payload.

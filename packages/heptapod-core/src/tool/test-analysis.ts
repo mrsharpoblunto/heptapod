@@ -1,3 +1,4 @@
+import type { EvidenceFixture } from "./test-evidence-requirements.js";
 import { loadHeptapodConfig } from "./config.js";
 import { analyzeTestFixture, type FixtureFormat } from "./test-fixtures/index.js";
 import type { ParsedTestCase } from "./test-fixtures/types.js";
@@ -89,6 +90,7 @@ function analyzeTestStep(
 }
 
 export interface NarrativeAnalysis {
+  testFixturesByStep: Map<string, EvidenceFixture[]>;
   testAreasByStep: Map<string, TestAreaChange[]>;
   filesByStep: Map<string, Map<string, FileSnapshot>>;
   referenceFilesByStep: Map<string, Map<string, FileSnapshot>>;
@@ -102,6 +104,8 @@ export function analyzeNarrative(
 ): NarrativeAnalysis {
   const format = loadHeptapodConfig(repo)?.test?.fixtures?.format ?? "auto";
   return withTemporaryIndex(repo, manifest.source.base, ({ env }) => {
+    const watchedFixtures = new Set<string>();
+    const testFixturesByStep = new Map<string, EvidenceFixture[]>();
     const testAreasByStep = new Map<string, TestAreaChange[]>();
     const filesByStep = new Map<string, Map<string, FileSnapshot>>();
     const referenceFilesByStep = new Map<string, Map<string, FileSnapshot>>();
@@ -130,11 +134,32 @@ export function analyzeNarrative(
         }
         if (references.size > 0) referenceFilesByStep.set(step.id, references);
       }
+      for (const file of patchFiles) {
+        if (file.from && watchedFixtures.delete(file.from)) watchedFixtures.add(file.path);
+      }
+      for (const area of step.cases ?? []) for (const file of area.files) {
+        const content = readTreeFile(repo, afterTree, file) ?? readTreeFile(repo, beforeTree, file);
+        if (content !== null && analyzeTestFixture(content, file, format).isFixture) watchedFixtures.add(file);
+      }
+      testFixturesByStep.set(step.id, [...watchedFixtures].map(file => {
+        const content = readTreeFile(repo, afterTree, file);
+        const current = content === null ? [] : analyzeTestFixture(content, file, format).cases;
+        const before = readTreeFile(repo, beforeTree, patchFiles.find(patch => patch.path === file)?.from ?? file);
+        const previous = before === null ? [] : analyzeTestFixture(before, file, format).cases;
+        const remaining = new Map<string, number>();
+        for (const test of current) remaining.set(test.key, (remaining.get(test.key) ?? 0) + 1);
+        const removed = previous.filter(test => {
+          const count = remaining.get(test.key) ?? 0;
+          if (count) { remaining.set(test.key, count - 1); return false; }
+          return true;
+        }).map(test => ({ ...test, removed: true }));
+        return { file, deleted: content === null, tests: [...current, ...removed] };
+      }));
       if (patch && step.kind === "tests") {
         const renames = new Map(patchFiles.flatMap((file) => file.from ? [[file.path, file.from] as const] : []));
         testAreasByStep.set(step.id, analyzeTestStep(repo, step, beforeTree, afterTree, format, renames));
       }
     }
-    return { testAreasByStep, filesByStep, referenceFilesByStep };
+    return { testAreasByStep, filesByStep, referenceFilesByStep, testFixturesByStep };
   });
 }

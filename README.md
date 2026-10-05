@@ -59,7 +59,7 @@ If the repository replaces npm's default registry, route the public Heptapod sco
 @thestraylight:registry=https://registry.npmjs.org/
 ```
 
-Narrative artifacts remain repository-local under `node_modules/.cache/heptapod/runs`. The CLI performs validation, tests, and structural diff generation in the repository, then uploads a versioned review payload to the global site. The site keeps repositories isolated even when they use the same pull-request numbers.
+Narrative artifacts remain repository-local under `node_modules/.cache/heptapod/runs`. The ingestion skill runs tests through the calling agent; the CLI validates the patch stack and submitted evidence and generates structural diffs in the repository, then uploads a versioned review payload to the global site. The site keeps repositories isolated even when they use the same pull-request numbers.
 
 ## Publishing
 
@@ -78,7 +78,7 @@ The skill installer creates project-local links for both agents: `.agents/skills
 
 The homepage lists registered repositories, supports adding and removing registrations, and shows a setup checklist for each repository. Open a repository to browse its uploaded reviews. Reviews are added and updated only by that repository's CLI or agent skill; the website does not run repository code.
 
-Setup checks and GitHub identity requests start as server promises and stream through Suspense. The same Next.js service handles repository registration, uploaded review storage, manual-test state, and GitHub draft publication. Capture, preparation, tests, structural diffs, and ingestion run only in the repository CLI.
+Setup checks and GitHub identity requests start as server promises and stream through Suspense. The same Next.js service handles repository registration, uploaded review storage, manual-test state, and GitHub draft publication. Capture, preparation, structural diffs, and ingestion run in the repository CLI. The skill directs the calling agent to run tests in an isolated checkout.
 
 ## CLI
 
@@ -96,8 +96,11 @@ Use `--service-port <web-port>` for a one-command override without changing the 
 
 For a branch comparison, use `--rev '<base>...<target>'` with `capture` and `ingest`; its stable review ID is `<full-base-sha>/<full-target-sha>`. Narrative source files live beside the database under `node_modules/.cache/heptapod/runs/<review-id>` and are resolved automatically. `validate` accepts that emitted ID through `--id`.
 
-Capture creates a **Preparing review** entry in SQLite and prints its absolute `metadataDirectory` and `narrative` path. Ingestion changes the review to pending, creates and later removes its own temporary worktree, and reconstructs every narrative step. Intermediate steps run the changed test fixtures introduced so far; the final step runs the complete suite. Observed output and unexpected failures are stored alongside the authored expectations.
+Capture creates a **Preparing review** entry in SQLite and prints its absolute `metadataDirectory` and `narrative` path. The calling agent owns reconstruction of test states, prerequisites, builds, test execution, and the ingest call. `validate` returns the Git tree after every step. Before ingestion, the agent records `test-results.json` with pinned revisions, step trees, commands, statuses, durations, and log paths. Ingestion validates that evidence without executing tests, then stores observed results and expectation mismatches. Ingestion also derives required coverage targets from every automated check, test area, fixture, and statically identified declaration, and checks their outcomes against native Vitest/GoogleTest reports. Command receipts can only prove command-level checks. Missing targets, contradictory outcomes, incomplete reports, or stale evidence are rejected; blocked runs remain explicitly not run. Existing reviews remain viewable, but re-ingestion requires the new evidence file.
 
+See the skill's [test evidence reference](packages/heptapod-skill/skills/heptapod/references/test-evidence.md) for the schema and execution workflow. Evidence is agent-reported; structural validation does not independently prove that commands ran.
+
+Most substantive narrative steps should include a visual reference explaining architecture, sequences, entity relationships, or algorithms. `heptapod diagram --input scene.excalidraw --svg flow.svg --output ndjson` wraps the Excalidraw library's SVG export. Put scenes and SVGs in the captured artifact directory and embed SVGs in step Markdown. See the [visual reference guide](packages/heptapod-skill/skills/heptapod/references/visuals.md).
 Add an optional `.heptapod.json` at the repository root when tests need project-specific preparation or a custom runner. Commands are argv arrays, and `{files}` expands to the focused fixture paths during intermediate steps (and to no arguments for the final full-suite run):
 
 ```json
@@ -131,15 +134,15 @@ For a compiled GoogleTest suite:
 }
 ```
 
-- `prerequisites` prepare the initial worktree and run again when the runner adapter identifies dependency changes.
-- `build` runs after a step's patch, once before that step's tests. A failed build is recorded and prevents execution of a stale binary. Later steps can build again.
+- The agent runs `prerequisites` to prepare the initial worktree and run again when the runner adapter identifies dependency changes.
+- The agent runs `build` after a step's patch, once before that step's tests. A failed build is recorded and prevents execution of a stale binary. Later steps can build again.
 - `runner.format`: `command` passes fixture paths to the command, preserving `{files}` and Node package discovery. It uses the process exit status without interpreting log text. `vitest` adds Vitest console-result parsing, including named failures and empty or incomplete runs; use a console reporter such as `default` or `verbose`. `googletest` runs from the worktree root, adds `--gtest_filter` for each fixture, and parses GoogleTest failures. The final suite uses `--gtest_filter=*`. Empty or incomplete GoogleTest runs cannot pass.
 - `fixtures.format`: `auto`, `javascript`, or `googletest`. The GoogleTest parser recognizes `TEST`, `TEST_F`, `TEST_P`, `TYPED_TEST`, and `TYPED_TEST_P`, including parameterized filter names. It reads standard macros from source; it does not expand custom macros or evaluate conditional compilation. Fixtures without recognized selectors are reported as not run.
 - `worktreeDirectory` optionally places temporary worktrees below a path relative to the reviewed repository (or an absolute path). For Windows tools from WSL, use a directory on a Windows drive, such as `.worktrees`. Keep this directory ignored by Git.
 
 Commands are argv arrays and run without an implicit shell. Use an explicit `bash -c` or another shell when needed. Each command receives `HEPTAPOD_REPOSITORY` (the original checkout) and `HEPTAPOD_WORKTREE` (the reconstructed checkout) for repository-specific setup. GoogleTest commands must not contain `{files}` or `--gtest_filter`; the adapter supplies the filter.
 
-Fixture adapters in `src/tool/test-fixtures` own file recognition (`supports` and `isFixture`), parsing, source locations, fingerprints, and optional test selectors. Filename conventions belong to the selected fixture format: a JavaScript-style test filename alone does not make a GoogleTest support file runnable. Runner adapters in `src/tool/test-runners` own project discovery, dependency-refresh rules, command validation and selection, and output interpretation through `parseResult`. Shared execution handles processes and exit status, then delegates test output to the selected adapter before truncating stored logs. Prerequisite and build output is never parsed as test results. Add an adapter to the corresponding registry to make another format selectable without changing configuration validation, narrative analysis, or worktree execution.
+Fixture adapters in `src/tool/test-fixtures` own file recognition (`supports` and `isFixture`), parsing, source locations, fingerprints, and optional test selectors. Filename conventions belong to the selected fixture format: a JavaScript-style test filename alone does not make a GoogleTest support file runnable. Runner adapters in `src/tool/test-runners` own project discovery, dependency-refresh rules, command validation and selection, and output interpretation through `parseResult`. The calling agent records process results and parses named failures from runner output. Prerequisite and build failures are blockers, not test results. Add an adapter to the corresponding registry to make another format selectable without changing configuration validation, narrative analysis, or evidence validation.
 
 When these workspace packages are locally linked, `pnpm exec heptapod` detects the source checkout and executes the TypeScript entrypoint through `tsx`, so CLI edits do not require a build. Use `pnpm exec heptapod-web-dev --port 3000` to run the linked web source with Next.js hot reload. The ordinary `heptapod-web` binary continues to serve the production build.
 

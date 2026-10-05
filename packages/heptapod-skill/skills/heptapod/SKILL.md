@@ -29,7 +29,7 @@ When running Heptapod as an agent, always pass `--output ndjson`. Parse each com
 
 Choose exactly one source selector. Use `--pr <number>` for a GitHub pull request. Use `--rev '<base>...<target>'` for a local revision comparison. The PR review ID is its number; the revision review ID printed by `capture` is `<full-base-sha>/<full-target-sha>`.
 
-When updating an existing review, first read its cached `narrative.json` and compare `source.base`, `source.head`, and `source.github.pullRequestUrl` with the current PR. Obtain the current comparison with `gh api repos/{owner}/{repo}/pulls/<number> --jq '{base: .base.sha, head: .head.sha, url: .html_url}'`; compare both full commit IDs, including the base. If they match and the metadata files are present, run `pnpm exec heptapod ingest --pr <number> --output ndjson` directly to rerun validation and tests using the existing narrative. Do not capture again, rewrite the narrative, or regenerate patches for an unchanged comparison. If ingestion fails, report or fix the specific validation/test issue; do not recapture merely because a test failed. If either revision changed or the metadata is missing, use the capture-and-author workflow.
+When updating an existing review, first read its cached `narrative.json` and compare `source.base`, `source.head`, and `source.github.pullRequestUrl` with the current PR. Obtain the current comparison with `gh api repos/{owner}/{repo}/pulls/<number> --jq '{base: .base.sha, head: .head.sha, url: .html_url}'`; compare both full commit IDs, including the base. If they match and the metadata files are present, run `pnpm exec heptapod ingest --pr <number> --output ndjson` after rerunning tests yourself and replacing `test-results.json` using the existing narrative. Do not capture again, rewrite the narrative, or regenerate patches for an unchanged comparison. If ingestion fails, report or fix the specific validation/test issue; do not recapture merely because a test failed. If either revision changed or the metadata is missing, use the capture-and-author workflow.
 
 For a new comparison, run the packaged Heptapod CLI:
 
@@ -92,38 +92,54 @@ Use the refactor `interfaces[].before` and `interfaces[].after` sections to show
 
 You can and should refer to previous or future steps within step explanations when necessary to help show how the steps interact with each other - you can use markdown hash url references to refer to other steps - use the name of the step in the link e.g. to navigate to the step renderer-interface use the #renderer-interface document hash.
 
-When splitting is straightforward, extract complete file sections or independent hunks from `source.diff`. When steps touch overlapping lines, use an isolated temporary index to generate each patch between consecutive states. Do not create a Git worktree yourself and never modify the user's working tree merely to manufacture patches. Worktree creation belongs exclusively to the CLI's ingestion verifier.
+When splitting is straightforward, extract complete file sections or independent hunks from `source.diff`. When steps touch overlapping lines, use an isolated temporary index to generate each patch between consecutive states. Never modify the user's working tree to manufacture patches or run reconstructed tests. Create your own isolated test worktree for the execution workflow below; ingestion does not create or manage test worktrees.
 
 Write the overall test summary for the user as a description of the changeset: the behavior covered, the risks checked, the results, and any limits on that evidence. Keep it agnostic of tooling. Do not mention Heptapod, ingestion, repeated test runs, or validation requirements in that summary. Apply the same rule to explanatory test prose and check details; operational instructions below govern your work, not the narrative's subject.
 
 ## Report verification state honestly
 
-Every step has `automated` and `manual` check arrays describing the expected state _after that step_. Carry relevant checks forward so the viewer shows when each check should transition from failing to passing. Use `basis: observed` only for evidence that existed before ingestion; otherwise use `basis: expected`. During ingestion, Heptapod independently reconstructs every step in its own temporary worktree, runs changed test fixtures at intermediate steps, runs the complete suite at the final step, and stores the actual result beside these expectations. It also records parsed failures that do not match any expected failing check. Never edit the expectations after seeing the observed run merely to hide a mismatch.
+Every step has `automated` and `manual` check arrays describing the expected state _after that step_. Carry relevant checks forward so the viewer shows when each check should transition from failing to passing. Use `basis: observed` only for evidence that existed before ingestion; otherwise use `basis: expected`. The calling agent owns test execution and ingestion end to end: reconstruct the step states, run tests, save the evidence, and invoke ingest. Ingestion verifies the patch stack and validates your submitted evidence; it never runs prerequisites, builds, or tests. Evidence is agent-reported, not an independent replay of the commands. Never edit the expectations after seeing the observed run merely to hide a mismatch.
 
-If the repository has a `.heptapod.json`, treat its test prerequisites, build commands, runner format, and fixture format as authoritative; do not replace project-specific setup with guesses in the narrative or create a worktree yourself. Fixture formats own file recognition and test declarations; runner formats own command rules and result parsing. Use `vitest` for Vitest output and `googletest` for GoogleTest output. Both batch fixtures by default; respect `runner.batch` and `runner.rebuild` in the repository configuration. Automatic rebuilds are runner-specific: Vitest reuses builds across source-only changes but rebuilds for dependency metadata changes, while GoogleTest rebuilds after changed steps. Vitest projects that import compiled workspace packages or generated assets need `rebuild: "always"`; do not assume all Vitest projects can skip builds. Never change these settings merely to hide a failed build or test. The default `command` format records process exit status without extracting test failures from log text. Keep supporting files in test sections even when the fixture adapter does not classify them as runnable tests.
+If the repository has a `.heptapod.json`, treat its test prerequisites, build commands, runner format, and fixture format as authoritative; do not replace project-specific setup with guesses in the narrative or test a different checkout. Fixture formats own file recognition and test declarations; runner formats own command rules and result parsing. Use `vitest` for Vitest output and `googletest` for GoogleTest output. Both batch fixtures by default; respect `runner.batch` and `runner.rebuild` in the repository configuration. Automatic rebuilds are runner-specific: Vitest reuses builds across source-only changes but rebuilds for dependency metadata changes, while GoogleTest rebuilds after changed steps. Vitest projects that import compiled workspace packages or generated assets need `rebuild: "always"`; do not assume all Vitest projects can skip builds. Never change these settings merely to hide a failed build or test. The default `command` format records process exit status without extracting test failures from log text. Keep supporting files in test sections even when the fixture adapter does not classify them as runnable tests.
 
 Use failing status deliberately when tests or behavior are introduced before their implementation. Use `not-run` when there is not enough evidence to infer a result, and explain blockers or important limitations in `detail`.
 
-## Validate, then ingest
+## Explain changes visually
+
+Most substantive steps should include a visual reference that explains what changes at a high level. Use architecture diagrams for component boundaries, sequence diagrams for execution order, entity relationships for data/contracts, and flowcharts for algorithms or decisions. Highlight the changed path or show before/after states; use code identifiers the reviewer can locate. Keep diagrams scoped to the step, label arrows, and distinguish existing behavior from added or removed behavior. Avoid decorative diagrams and omit them for trivial changes where prose is clearer.
+
+Author an editable `.excalidraw` scene in `visuals/` under the captured metadata directory, then use the wrapped library export:
+
+```bash
+pnpm exec heptapod diagram --input <metadata-directory>/visuals/flow.excalidraw --svg <metadata-directory>/visuals/flow.svg --output ndjson
+```
+
+Read [references/visuals.md](references/visuals.md) for the supported scene format and a concrete example. Include `![Changed request flow](../visuals/flow.svg)` on its own line in the relevant `steps/*.md` body. Ingestion embeds the SVG in the uploaded review. Inspect the exported image for legible labels, correct arrows, overlap, and agreement with that step's code before linking it. Keep the editable scene beside the SVG.
+
+## Validate, run tests yourself, then ingest
 
 Validate repeatedly while constructing steps:
 
 ```bash
-pnpm exec heptapod validate \
-  --id <review-id> \
-  --output ndjson
+pnpm exec heptapod validate --id <review-id> --output ndjson
 ```
 
-Fix patch application failures at the first failing step. A successful result proves both final Git tree identity and byte-for-byte equality with the captured canonical comparison.
+Fix patch application failures at the first failing step. A successful result proves final Git tree identity and byte-for-byte equality with the captured comparison, and returns `stepTrees` and `testRequirements`, keyed by step ID. The requirements identify every automated metadata check, test area, fixture, and statically identified test declaration that needs result data.
 
-Ingest only through the tool, which validates again and will not store an unverified walkthrough:
+Read [references/test-evidence.md](references/test-evidence.md) before running tests. The calling agent must:
+
+1. Create an isolated worktree at the pinned base, respecting `.heptapod.json`'s `worktreeDirectory` when configured. Apply every narrative patch in order, including generated changes. Never run these tests against the user's working tree.
+2. Run repository prerequisites, builds, and tests itself through its command tools. Honor the configured runner, fixture format, batch/rebuild policy, and timeouts. Run changed fixtures introduced so far at intermediate steps and the complete suite at the final step. Refresh dependencies when metadata changes, rebuild when required, and never run stale binaries after a failed build.
+3. Verify each tested tree against `stepTrees` using `git write-tree`, and check for unstaged tracked changes before running. Capture the actual command, exit status, duration, combined output, and named failures. Restore files modified by tests before applying the next patch, keeping generated build output only when safe to reuse.
+4. Write schema-version-2 `test-results.json`, original runner reports, and logs inside the captured metadata directory using the reference schema. Every step needs a result, and every target in `testRequirements` needs its own `coverage` entry linked to report outcomes. Reuse actual report outcomes across related metadata entries; never use a suite pass or command exit as a substitute for missing individual results. If execution is blocked, record `not-run` for each affected target with a concrete reason; never fabricate passing results or infer them from an expected check. A final `not-run` result must still have `scope: full-suite` and explain the blocker. Failed prerequisites/builds mean tests are not run; attach their logs and explain the blocker.
+5. Remove only the isolated worktree it created. Review and report unexpected failures without changing expectations to hide mismatches.
+
+Ingest only through the tool, which validates again and refuses missing targets, malformed/stale evidence, incomplete reports, and outcomes that contradict the attached reports:
 
 ```bash
-pnpm exec heptapod ingest \
-  --pr <pull-request-number> \
-  --output ndjson
+pnpm exec heptapod ingest --pr <pull-request-number> --output ndjson
 ```
 
-For a revision review, replace `--pr <pull-request-number>` with `--rev '<base-ref>...<target-ref>'`. `ingest` resolves the cached narrative ID itself; it does not accept an arbitrary `--id`.
+For a revision review, replace `--pr <pull-request-number>` with `--rev '<base-ref>...<target-ref>'`. `ingest` resolves the cached narrative ID itself; it does not accept an arbitrary `--id`. When launched by `heptapod prepare`, follow its instruction to add `--publish false`: the agent still runs ingestion, while the parent uploads the stored result once. Otherwise ingestion uploads and emits `review.completed` with the complete URL.
 
-The review remains local while you author and validate metadata. Ingestion validates the matching cached narrative, tests every reconstructed step, uploads the versioned result to the global service, and emits `review.completed` with the complete URL. Give that URL to the user, along with the cached run directory, review ID, pinned base/head, narrative step count, exact-verification result, and any observed test mismatches. Do not claim completion if validation or upload fails.
+The review remains local while you author metadata and run tests. Give the user the review URL, cached run directory, review ID, pinned base/head, step count, exact-verification result, and any test mismatches or execution blockers. Do not claim tests passed unless they ran, or claim publication if validation or upload fails.

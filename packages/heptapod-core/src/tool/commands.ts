@@ -1,3 +1,5 @@
+import { analyzeNarrative } from "./test-analysis.js";
+import { evidenceRequirements } from "./test-evidence-requirements.js";
 import { captureNarrative } from "./capture.js";
 import { resolveReviewNarrativePath, resolveReviewRunDirectory } from "./cache.js";
 import { ingestNarrative } from "./ingest.js";
@@ -18,7 +20,10 @@ export function captureReviewSource(repo: string, source: ReviewSourceSelection,
 }
 export function validateReview(repo: string, id: string, narrativePath = resolveReviewNarrativePath(id)) {
   const { manifest, manifestPath } = loadManifest(narrativePath, repo);
-  return { id, narrative: manifestPath, ...verifyNarrative(repo, manifest, manifestPath) };
+  const verification = verifyNarrative(repo, manifest, manifestPath);
+  const analysis = analyzeNarrative(repo, manifest, manifestPath);
+  return { id, narrative: manifestPath, ...verification,
+    testRequirements: Object.fromEntries(evidenceRequirements(manifest, analysis.testFixturesByStep)) };
 }
 interface IngestOptions { narrativePath?: string; siteUrl?: string; onProgress?: (message: string) => void }
 export function ingestReview(repo: string, selection: SourceSelector, options: IngestOptions = {}) {
